@@ -50,6 +50,16 @@ services:
       ollama:
         condition: service_started
 
+  # --- NEW UI SERVICE ---
+  ui:
+    build: ./ui
+    container_name: sqlingua-ui
+    restart: always
+    ports:
+      - "8501:8501"
+    depends_on:
+      - app
+
 volumes:
   pgdata:
   ollama_data:
