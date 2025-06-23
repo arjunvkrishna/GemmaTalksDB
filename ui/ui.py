@@ -5,77 +5,98 @@ import json
 
 # --- Page Configuration ---
 st.set_page_config(
-    page_title="SQLingua",
+    page_title="GemmaTalksDB",
     page_icon="🗣️",
     layout="wide"
 )
 
-# --- App Title and Description ---
-st.title("SQLingua 🗣️↔️🐘")
-st.markdown("Talk to your PostgreSQL database in plain English. Powered by Gemma, Ollama, and Docker.")
+# --- App Title ---
+st.title("GemmaTalksDB 🗣️↔️🐘")
+st.markdown("A conversational assistant for your PostgreSQL database.")
 st.markdown("---")
 
-# --- Configuration ---
-# The API endpoint is the name of the 'app' service in docker-compose, on port 8000
-API_URL = "http://app:8000/query"
+# --- Initialize Session State ---
+# This will store the conversation history
+if 'history' not in st.session_state:
+    st.session_state.history = []
 
-# --- UI Elements ---
-st.sidebar.header("About")
-st.sidebar.info(
-    "This application uses a local Gemma LLM to convert your natural language "
-    "questions into SQL queries and executes them against a PostgreSQL database."
-)
-st.sidebar.header("Example Questions")
-st.sidebar.markdown("""
-- *Who is the manager of the Sales department?*
-- *How many employees are in the Engineering department?*
-- *List all employees hired after 2022.*
-- *What is the average salary in the Sales department?*
-""")
-
-
-# --- Main Application Logic ---
-# Use a form for the input to prevent rerunning the app on every keystroke
-with st.form(key='query_form'):
-    question = st.text_input("Enter your question about the database:", placeholder="e.g., Who is the highest-paid employee?")
-    submit_button = st.form_submit_button(label='▶️ Ask SQLingua')
-
-# Handle form submission
-if submit_button and question:
-    with st.spinner("🧠 SQLingua is thinking..."):
+# --- Helper function to call the backend ---
+def get_ai_response(history):
+    API_URL = "http://app:8000/query"
+    try:
+        response = requests.post(API_URL, json={"history": history})
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.HTTPError as e:
         try:
-            # Call the backend API
-            payload = {"question": question}
-            response = requests.post(API_URL, json=payload)
-            response.raise_for_status()  # Raise an exception for bad status codes (4xx or 5xx)
+            return {"error": e.response.json().get('detail', e.response.text)}
+        except json.JSONDecodeError:
+            return {"error": f"API Error: {e.response.status_code} {e.response.reason}."}
+    except requests.exceptions.RequestException as e:
+        return {"error": f"Connection Error: Could not connect to the API. Details: {e}"}
 
-            data = response.json()
-
-            st.markdown("---")
-            st.subheader("💡 Result")
-
-            # Display the result
-            if 'result' in data and data['result']:
-                # If the result is a list of dictionaries, display as a table
-                if isinstance(data['result'], list) and all(isinstance(i, dict) for i in data['result']):
-                    df = pd.DataFrame(data['result'])
+# --- Display Chat History ---
+# Loop through the history and display each message
+for turn in st.session_state.history:
+    role = turn["role"]
+    with st.chat_message(name=role, avatar="🧑‍💻" if role == "user" else "🤖"):
+        # The user's message is just text
+        if role == "user":
+            st.markdown(turn["content"])
+        # The assistant's message contains the result and the SQL query
+        else:
+            result = turn.get("result")
+            sql_query = turn.get("sql_query")
+            
+            if result:
+                if isinstance(result, list) and all(isinstance(i, dict) for i in result):
+                    df = pd.DataFrame(result)
                     st.dataframe(df, use_container_width=True)
-                # Otherwise, display the raw JSON
                 else:
-                    st.json(data['result'])
+                    st.json(result)
             else:
                 st.info("The query executed successfully but returned no results.")
 
-            # Expander to show the technical details
-            with st.expander("Show Technical Details"):
-                st.write("**Your Question:**")
-                st.code(data.get('question', ''), language='text')
-                st.write("**Generated SQL Query:**")
-                st.code(data.get('sql_query', ''), language='sql')
+            with st.expander("Show Generated SQL Query"):
+                st.code(sql_query, language='sql')
 
-        except requests.exceptions.RequestException as e:
-            st.error(f"Connection Error: Could not connect to the API. Is the 'app' service running? \n\nDetails: {e}")
-        except Exception as e:
-            st.error(f"An error occurred: {e}")
-elif submit_button:
-    st.warning("Please enter a question.")
+
+# --- Chat Input ---
+# The text input for the user's question
+prompt = st.chat_input("Ask a question about your database...")
+
+if prompt:
+    # 1. Add user's question to history and display it
+    st.session_state.history.append({"role": "user", "content": prompt})
+    with st.chat_message("user", avatar="🧑‍💻"):
+        st.markdown(prompt)
+
+    # 2. Get AI response and display it
+    with st.chat_message("assistant", avatar="🤖"):
+        with st.spinner("🧠 Gemma is thinking..."):
+            # The payload now contains the full history
+            response_data = get_ai_response(st.session_state.history)
+
+            if "error" in response_data:
+                st.error(response_data["error"])
+                # Add the error to history so it's displayed
+                st.session_state.history.append({"role": "assistant", "content": response_data["error"]})
+            else:
+                result = response_data.get("result")
+                sql_query = response_data.get("sql_query")
+
+                if result:
+                    if isinstance(result, list) and all(isinstance(i, dict) for i in result):
+                        df = pd.DataFrame(result)
+                        st.dataframe(df, use_container_width=True)
+                    else:
+                        st.json(result)
+                else:
+                    st.info("The query executed successfully but returned no results.")
+                
+                with st.expander("Show Generated SQL Query"):
+                    st.code(sql_query, language='sql')
+
+                # 3. Add AI's full response to history for context in the next turn
+                # For the LLM's context, we only need to pass the generated SQL
+                st.session_state.history.append({"role": "assistant", "content": sql_query})

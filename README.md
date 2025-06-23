@@ -29,50 +29,6 @@ graph TD
     C -- "6. Return query results" --> B;
     B -- "7. Send JSON response" --> A;
 
-    Of course. A great project deserves a great README. A well-written README is your project's front door; it should invite people in and show them how to use what you've built.
-
-Here is a comprehensive README file tailored for your project. I have used the name GemmaTalksDB, but you can replace it with whatever you chose.
-
-Instructions:
-
-    Create a new file named README.md in the root of your project directory (nl_to_sql_project/).
-    Copy the entire content below and paste it into that file.
-    Replace the placeholder [your-github-username] with your actual GitHub username.
-    Commit and push it to your repository!
-
-Markdown
-
-# GemmaTalksDB 🗣️↔️🐘
-
-**Talk to your PostgreSQL database in plain English. A fully containerized, local-first, Natural Language to SQL engine powered by Gemma, Ollama, and Docker.**
-
-This project provides a complete, ready-to-use system that accepts natural language questions via an API, uses a local Large Language Model (LLM) to translate them into SQL queries, executes them against a PostgreSQL database, and returns the results.
-
----
-
-## 🏛️ Architecture
-
-The entire system is orchestrated with Docker Compose and consists of three main services that work together seamlessly:
-
-1.  **`db` (PostgreSQL):** The database service that stores your data. It's automatically initialized with a sample schema and data on first startup.
-2.  **`ollama` (Ollama + Gemma):** The LLM service. It downloads and serves the Gemma LLM, making it available for inference without any external API calls.
-3.  **`app` (The GemmaTalksDB API):** A Python FastAPI application that acts as the brain of the operation. It receives user requests, orchestrates the prompt engineering, communicates with the LLM, executes the generated SQL, and returns the final result.
-
-### System Flow
-
-Here is how a request flows through the system:
-
-```mermaid
-graph TD
-    A[👨‍💻 User] -- "POST /query with a question" --> B(🚀 GemmaTalksDB API);
-    B -- "1. Fetch schema" --> C(🐘 PostgreSQL DB);
-    C -- "2. Return schema" --> B;
-    B -- "3. Send prompt (question + schema)" --> D(🧠 Ollama / Gemma LLM);
-    D -- "4. Return generated SQL query" --> B;
-    B -- "5. Execute SQL query" --> C;
-    C -- "6. Return query results" --> B;
-    B -- "7. Send JSON response" --> A;
-
 ✨ Features
 
     Conversational Queries: Ask questions in natural English instead of writing complex SQL.
