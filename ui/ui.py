@@ -5,13 +5,13 @@ import json
 
 # --- Page Configuration ---
 st.set_page_config(
-    page_title="AISavvy.py",
+    page_title="AISavvy",
     page_icon="🗣️",
     layout="wide"
 )
 
 # --- App Title ---
-st.title("AISavvy.py 🗣️↔️🐘")
+st.title("AISavvy 🗣️↔️🐘")
 st.markdown("A conversational assistant for your PostgreSQL database.")
 st.markdown("---")
 
@@ -73,7 +73,7 @@ if prompt:
 
     # 2. Get AI response and display it
     with st.chat_message("assistant", avatar="🤖"):
-        with st.spinner("🧠 Gemma is thinking..."):
+        with st.spinner("🧠 AISavvy is thinking..."):
             # The payload now contains the full history
             response_data = get_ai_response(st.session_state.history)
 
