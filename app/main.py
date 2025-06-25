@@ -109,24 +109,42 @@ async def get_db_schema_and_erd():
             schema_parts.append(f"{table_name}({column_names})")
         return "\n".join(schema_parts), "\n".join(dot_parts) + "\n}"
 
-def generate_prompt(schema, history, question_override=None):
-    # This function is now more generic for different tasks
-    # ... (The "golden prompt" from the previous step is still excellent here)
-    conversation_log = "\n".join(f"{turn.role}: {turn.content}" for turn in history[:-1])
-    last_question = question_override or history[-1].content
-    
+# In app/main.py, replace the existing generate_prompt function with this one.
+
+def generate_prompt(schema, history):
+    # Format the conversation history, including the results for grounding.
+    conversation_log = ""
+    for turn in history[:-1]:  # Exclude the latest question
+        if turn['role'] == 'user':
+            conversation_log += f"User: {turn['content']}\n"
+        elif turn['role'] == 'assistant':
+            result_str = json.dumps(turn['content'].get('result'))
+            conversation_log += f"Assistant (Result): {result_str}\n"
+
+    last_question = history[-1]['content']
+
     prompt = f"""You are a world-class PostgreSQL query writer AI. Your task is to write a single, valid PostgreSQL query to answer the user's final question.
 
 ### IMMUTABLE RULES:
-1.  **YOU MUST ONLY USE TABLES AND COLUMNS FROM THE COMPRESSED SCHEMA PROVIDED BELOW.**
-2.  The schema is represented as `table_name(column1, column2)`.
-3.  Analyze the `Conversation History` to resolve references (like "his", "her", "that").
+1.  **YOU MUST ONLY USE TABLES AND COLUMNS FROM THE SCHEMA PROVIDED BELOW.** Do not invent columns or tables.
+2.  If the user asks for a "total", "count", "average", "maximum", or "minimum", you **MUST** use the appropriate SQL aggregate function (`SUM`, `COUNT`, `AVG`, `MAX`, `MIN`).
+3.  Analyze the `Conversation History` to understand follow-up questions.
 4.  Your output **MUST BE ONLY THE SQL QUERY**. No explanations or markdown.
 
-### COMPRESSED DATABASE SCHEMA:
+### COMPRESSED DATABASE SCHEMA (Ground Truth):
 {schema}
 
-### CONVERSATION HISTORY:
+### QUERY EXAMPLES (Important Patterns to Follow):
+
+# Example 1: Simple Lookup
+User Question: "Who is the manager of the Engineering department?"
+Correct SQL: SELECT manager FROM departments WHERE department_name = 'Engineering';
+
+# Example 2: Aggregation / Calculation
+User Question: "What is the total salary of all employees?"
+Correct SQL: SELECT SUM(salary) FROM employees;
+
+### CONVERSATION HISTORY (Context):
 {conversation_log if conversation_log else "No previous conversation."}
 
 ### FINAL USER QUESTION (Your Task):
@@ -148,7 +166,7 @@ async def process_query(request: QueryRequest):
 
     prompt = generate_prompt(DB_SCHEMA_CACHE, request.history)
     try:
-        llm_response = await ollama_client.chat(model=os.getenv("LLM_MODEL", "llama3"), messages=[{'role': 'user', 'content': prompt}])
+        llm_response = await ollama_client.chat(model=os.getenv("LLM_MODEL", "phi3:mini"), messages=[{'role': 'user', 'content': prompt}])
         raw_sql = llm_response['message']['content'].strip()
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"LLM service unavailable: {e}")
