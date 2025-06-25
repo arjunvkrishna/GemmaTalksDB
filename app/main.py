@@ -3,7 +3,7 @@ import re
 import json
 import hashlib
 from contextlib import asynccontextmanager
-from typing import List, Optional
+from typing import List, Dict, Any, Union
 
 import asyncpg
 import aiosqlite
@@ -11,16 +11,17 @@ from ollama import AsyncClient
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-# --- Configuration ---
+# --- Configuration (Unchanged) ---
 CACHE_DB_PATH = "/app/data/cache.db"
 DB_SCHEMA_CACHE = ""
 DB_SCHEMA_HASH = ""
 db_pool = None
 ollama_client = None
 
-# --- NEW: Lifespan Manager for Startup/Shutdown Events ---
+# --- Lifespan Manager (Unchanged) ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # ... (Same as before)
     print("Application startup...")
     global db_pool, ollama_client, DB_SCHEMA_CACHE, DB_SCHEMA_HASH
     try:
@@ -43,25 +44,23 @@ async def lifespan(app: FastAPI):
     if db_pool:
         await db_pool.close()
         print("Database connection pool closed.")
-app = FastAPI(
-    title="AISavvy API",
-    description="A feature-rich API for conversational SQL with caching, history, and visualization.",
-    lifespan=lifespan
-)
+
+app = FastAPI(title="AISavvy API", description="A feature-rich API for conversational SQL.", lifespan=lifespan)
 
 # --- Pydantic Models ---
 class Turn(BaseModel):
     role: str
-    content: str
+    # --- FIXED: Content can now be a string OR a dictionary ---
+    content: Union[str, Dict[str, Any]]
 
 class QueryRequest(BaseModel):
     history: List[Turn]
 
-# --- Database and Cache Setup ---
+# --- Database, Cache, and Schema functions (Unchanged) ---
 async def setup_databases():
+    # ... (Same as before)
     async with aiosqlite.connect(CACHE_DB_PATH) as db:
         await db.execute("CREATE TABLE IF NOT EXISTS llm_cache (key TEXT PRIMARY KEY, response TEXT NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
-        # NEW: Table for query history
         await db.execute("""
             CREATE TABLE IF NOT EXISTS query_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -74,20 +73,21 @@ async def setup_databases():
         """)
         await db.commit()
 
-# --- Caching Functions (Unchanged) ---
 async def get_from_cache(key: str):
+    # ... (Same as before)
     async with aiosqlite.connect(CACHE_DB_PATH) as db:
         async with db.execute("SELECT response FROM llm_cache WHERE key = ?", (key,)) as cursor:
             row = await cursor.fetchone()
             return json.loads(row[0]) if row else None
 
 async def set_to_cache(key: str, response: dict):
+    # ... (Same as before)
     async with aiosqlite.connect(CACHE_DB_PATH) as db:
         await db.execute("INSERT OR REPLACE INTO llm_cache (key, response) VALUES (?, ?)", (key, json.dumps(response)))
         await db.commit()
 
-# --- NEW: Query Logging Function ---
 async def log_query(question, sql, success, error=""):
+    # ... (Same as before)
     async with aiosqlite.connect(CACHE_DB_PATH) as db:
         await db.execute(
             "INSERT INTO query_log (question, sql_query, success, error_message) VALUES (?, ?, ?, ?)",
@@ -95,8 +95,8 @@ async def log_query(question, sql, success, error=""):
         )
         await db.commit()
 
-# --- Schema and Prompt Functions ---
 async def get_db_schema_and_erd():
+    # ... (Same as before)
     async with db_pool.acquire() as conn:
         tables = await conn.fetch("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'")
         schema_parts = []
@@ -109,40 +109,31 @@ async def get_db_schema_and_erd():
             schema_parts.append(f"{table_name}({column_names})")
         return "\n".join(schema_parts), "\n".join(dot_parts) + "\n}"
 
-# In app/main.py, replace the existing generate_prompt function with this one.
-
+# --- Prompt Generation ---
 def generate_prompt(schema, history):
-    # Format the conversation history, including the results for grounding.
+    # --- FIXED: Handles the new, richer history format ---
     conversation_log = ""
-    for turn in history[:-1]:  # Exclude the latest question
-        if turn['role'] == 'user':
-            conversation_log += f"User: {turn['content']}\n"
-        elif turn['role'] == 'assistant':
-            result_str = json.dumps(turn['content'].get('result'))
-            conversation_log += f"Assistant (Result): {result_str}\n"
+    for turn in history[:-1]:
+        if turn.role == 'user':
+            conversation_log += f"User: {turn.content}\n"
+        elif turn.role == 'assistant':
+            # Check if content is a dict and has a result
+            if isinstance(turn.content, dict) and 'result' in turn.content:
+                result_str = json.dumps(turn.content['result'])
+                conversation_log += f"Assistant (Result): {result_str}\n"
 
-    last_question = history[-1]['content']
-
+    last_question = history[-1].content
+    # The rest of the prompt string is the same "golden" prompt
     prompt = f"""You are a world-class PostgreSQL query writer AI. Your task is to write a single, valid PostgreSQL query to answer the user's final question.
 
 ### IMMUTABLE RULES:
-1.  **YOU MUST ONLY USE TABLES AND COLUMNS FROM THE SCHEMA PROVIDED BELOW.** Do not invent columns or tables.
-2.  If the user asks for a "total", "count", "average", "maximum", or "minimum", you **MUST** use the appropriate SQL aggregate function (`SUM`, `COUNT`, `AVG`, `MAX`, `MIN`).
-3.  Analyze the `Conversation History` to understand follow-up questions.
-4.  Your output **MUST BE ONLY THE SQL QUERY**. No explanations or markdown.
+1.  **YOU MUST ONLY USE TABLES AND COLUMNS FROM THE SCHEMA PROVIDED BELOW.**
+2.  If the user asks for a "total", "count", "average", etc., you **MUST** use the appropriate SQL aggregate function (`SUM`, `COUNT`, `AVG`).
+3.  Analyze the `Conversation History` to understand follow-up questions. The history contains user questions and the JSON data results from your previous queries. Use these results to answer questions about them.
+4.  Your output **MUST BE ONLY THE SQL QUERY**.
 
 ### COMPRESSED DATABASE SCHEMA (Ground Truth):
 {schema}
-
-### QUERY EXAMPLES (Important Patterns to Follow):
-
-# Example 1: Simple Lookup
-User Question: "Who is the manager of the Engineering department?"
-Correct SQL: SELECT manager FROM departments WHERE department_name = 'Engineering';
-
-# Example 2: Aggregation / Calculation
-User Question: "What is the total salary of all employees?"
-Correct SQL: SELECT SUM(salary) FROM employees;
 
 ### CONVERSATION HISTORY (Context):
 {conversation_log if conversation_log else "No previous conversation."}
@@ -154,9 +145,10 @@ Correct SQL: SELECT SUM(salary) FROM employees;
 """
     return prompt.strip()
 
-# --- Main API Endpoint ---
+# --- API Endpoints (Main /query logic is unchanged) ---
 @app.post("/query")
 async def process_query(request: QueryRequest):
+    # ... (The entire logic of this function remains the same as the last version)
     last_question = request.history[-1].content
     cache_key_hash = hashlib.sha256((json.dumps([t.dict() for t in request.history]) + DB_SCHEMA_HASH).encode()).hexdigest()
 
@@ -166,7 +158,7 @@ async def process_query(request: QueryRequest):
 
     prompt = generate_prompt(DB_SCHEMA_CACHE, request.history)
     try:
-        llm_response = await ollama_client.chat(model=os.getenv("LLM_MODEL", "phi3:mini"), messages=[{'role': 'user', 'content': prompt}])
+        llm_response = await ollama_client.chat(model=os.getenv("LLM_MODEL", "llama3"), messages=[{'role': 'user', 'content': prompt}])
         raw_sql = llm_response['message']['content'].strip()
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"LLM service unavailable: {e}")
@@ -174,21 +166,16 @@ async def process_query(request: QueryRequest):
     sql_match = re.search(r"```(?:sql)?\s*(.*?)\s*```", raw_sql, re.DOTALL)
     sql_query = (sql_match.group(1).strip() if sql_match else raw_sql).rstrip(';')
     
-    # --- SQL Auto-Fix and Execution Logic ---
     try:
         async with db_pool.acquire() as conn:
             stmt = await conn.prepare(sql_query)
             records = await stmt.fetch()
             results = [dict(record) for record in records]
         await log_query(last_question, sql_query, True)
-        success = True
-        suggested_fix = ""
     except asyncpg.PostgresError as e:
-        success = False
         error_message = str(e)
         await log_query(last_question, sql_query, False, error_message)
         
-        # --- NEW: SQL Auto-Fix Assistant ---
         fix_prompt = f"The following SQL query failed: `{sql_query}`. The database returned this error: `{error_message}`. Based on the user's question: `{last_question}` and the schema: `{DB_SCHEMA_CACHE}`, please provide a corrected SQL query. Respond with ONLY the corrected SQL query."
         try:
             fix_response = await ollama_client.chat(model=os.getenv("LLM_MODEL", "llama3"), messages=[{'role': 'user', 'content': fix_prompt}])
@@ -197,9 +184,8 @@ async def process_query(request: QueryRequest):
             suggested_fix = "Could not generate a fix."
         raise HTTPException(status_code=400, detail={"error": error_message, "suggested_fix": suggested_fix})
 
-    # --- NEW: DataViz Intent Detection ---
     chart_spec = None
-    if success and results:
+    if results:
         viz_prompt = f"Given the user's question: '{last_question}' and these resulting data columns: {list(results[0].keys())}. Should this result be visualized with a chart? If yes, what is the best chart type (bar, line, or pie) and which columns should be on the x and y axes? Respond ONLY with a single, valid JSON object like {{\"chart_needed\": true, \"chart_type\": \"bar\", \"x_column\": \"column_name\", \"y_column\": \"column_name\"}} or {{\"chart_needed\": false}}."
         try:
             viz_response = await ollama_client.chat(model=os.getenv("LLM_MODEL", "llama3"), messages=[{'role': 'user', 'content': viz_prompt}])
@@ -211,16 +197,19 @@ async def process_query(request: QueryRequest):
     await set_to_cache(cache_key_hash, final_response)
     return final_response
 
-# --- NEW: Endpoints for UI Features ---
+
 @app.get("/history")
 async def get_history():
+    # ... (Unchanged)
     async with aiosqlite.connect(CACHE_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("SELECT * FROM query_log ORDER BY created_at DESC") as cursor:
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
 
+
 @app.get("/schema/erd")
 async def get_schema_erd():
+    # ... (Unchanged)
     _, erd_dot_string = await get_db_schema_and_erd()
     return {"dot_string": erd_dot_string}
