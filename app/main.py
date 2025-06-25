@@ -1,25 +1,78 @@
 import os
-import psycopg2
-import ollama
 import re
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
+import json
+import hashlib
+from contextlib import asynccontextmanager
 from typing import List
 
-# --- Configuration (No changes here) ---
-DB_HOST = os.getenv("DB_HOST", "db")
-DB_NAME = os.getenv("POSTGRES_DB", "mydb")
-DB_USER = os.getenv("POSTGRES_USER", "postgres")
-DB_PASSWORD = os.getenv("POSTGRES_PASSWORD", "my_password")
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://ollama:11434")
-LLM_MODEL = "gemma:2b"
+import asyncpg
+import aiosqlite
+from ollama import AsyncClient
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field
 
+# --- NEW: Configuration for Cache ---
+CACHE_DB_PATH = "/app/data/cache.db"
+
+# --- In-memory caches for startup data ---
+DB_SCHEMA_CACHE = ""
+DB_SCHEMA_HASH = ""
+
+# --- Async Clients ---
+db_pool = None
+ollama_client = None
+
+# --- NEW: FastAPI Lifespan Manager for Startup/Shutdown Events ---
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # === On Startup ===
+    print("Application startup...")
+    global db_pool, ollama_client, DB_SCHEMA_CACHE, DB_SCHEMA_HASH
+
+    # 1. Initialize DB Connection Pool
+    try:
+        db_pool = await asyncpg.create_pool(
+            user=os.getenv("POSTGRES_USER", "postgres"),
+            password=os.getenv("POSTGRES_PASSWORD", "my_password"),
+            database=os.getenv("POSTGRES_DB", "mydb"),
+            host=os.getenv("DB_HOST", "db"),
+        )
+        print("Database connection pool created.")
+    except Exception as e:
+        print(f"FATAL: Could not connect to PostgreSQL: {e}")
+        # In a real app, you might want to exit or retry
+        raise
+
+    # 2. Initialize Ollama Client
+    ollama_client = AsyncClient(host=os.getenv("OLLAMA_HOST", "http://ollama:11434"))
+    print("Ollama async client initialized.")
+
+    # 3. Pre-load DB Schema
+    DB_SCHEMA_CACHE = await get_db_schema()
+    DB_SCHEMA_HASH = hashlib.sha256(DB_SCHEMA_CACHE.encode()).hexdigest()
+    print("Database schema pre-loaded and hashed.")
+    print(f"Compressed Schema:\n{DB_SCHEMA_CACHE}")
+
+    # 4. Initialize Cache DB
+    await setup_cache_db()
+    print("Cache database initialized.")
+    
+    yield # The application is now running
+
+    # === On Shutdown ===
+    print("Application shutdown...")
+    if db_pool:
+        await db_pool.close()
+        print("Database connection pool closed.")
+
+# --- FastAPI App Initialization with Lifespan Manager ---
 app = FastAPI(
-    title="GemmaTalksDB API",
-    description="An API to convert natural language questions into SQL queries with conversational context.",
+    title="GemmaTalksDB API v2",
+    description="A high-performance API for converting natural language to SQL with caching and async I/O.",
+    lifespan=lifespan
 )
 
-# --- NEW: Pydantic models for conversational history ---
+# --- Pydantic Models ---
 class Turn(BaseModel):
     role: str
     content: str
@@ -28,72 +81,78 @@ class QueryRequest(BaseModel):
     history: List[Turn] = Field(..., description="The entire conversation history.")
 
 
-# --- Helper Functions (get_db_connection, get_db_schema are unchanged) ---
-def get_db_connection():
-    return psycopg2.connect(
-        dbname=DB_NAME, user=DB_USER, password=DB_PASSWORD, host=DB_HOST, port="5432"
-    )
+# --- NEW: Caching Functions ---
+async def setup_cache_db():
+    async with aiosqlite.connect(CACHE_DB_PATH) as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS llm_cache (
+                key TEXT PRIMARY KEY,
+                response TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await db.commit()
 
-def get_db_schema(conn):
-    schema_str = ""
-    with conn.cursor() as cur:
-        cur.execute("""
+async def get_from_cache(key: str):
+    async with aiosqlite.connect(CACHE_DB_PATH) as db:
+        async with db.execute("SELECT response FROM llm_cache WHERE key = ?", (key,)) as cursor:
+            row = await cursor.fetchone()
+            return json.loads(row[0]) if row else None
+
+async def set_to_cache(key: str, response: dict):
+    async with aiosqlite.connect(CACHE_DB_PATH) as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO llm_cache (key, response) VALUES (?, ?)",
+            (key, json.dumps(response)),
+        )
+        await db.commit()
+
+
+# --- NEW: Schema Loading (now with Prompt Compression) ---
+async def get_db_schema():
+    """
+    Fetches the schema and generates a compressed, token-efficient representation.
+    """
+    async with db_pool.acquire() as conn:
+        tables = await conn.fetch("""
             SELECT table_name FROM information_schema.tables
             WHERE table_schema = 'public' AND table_type = 'BASE TABLE';
         """)
-        tables = [row[0] for row in cur.fetchall()]
+        
+        schema_parts = []
         for table in tables:
-            cur.execute(f"""
-                SELECT column_name, data_type, is_nullable
-                FROM information_schema.columns
-                WHERE table_name = '{table}' ORDER BY ordinal_position;
+            table_name = table['table_name']
+            columns = await conn.fetch(f"""
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name = '{table_name}' ORDER BY ordinal_position;
             """)
-            columns = cur.fetchall()
-            schema_str += f"CREATE TABLE {table} (\n"
-            for col in columns:
-                col_name, data_type, is_nullable = col
-                schema_str += f"  {col_name} {data_type}{' NOT NULL' if is_nullable == 'NO' else ''},\n"
-            cur.execute(f"""
-                SELECT c.column_name FROM information_schema.key_column_usage AS c
-                LEFT JOIN information_schema.table_constraints AS t ON t.constraint_name = c.constraint_name
-                WHERE t.table_name = '{table}' AND t.constraint_type = 'PRIMARY KEY';
-            """)
-            pk = cur.fetchone()
-            if pk:
-                schema_str += f"  PRIMARY KEY ({pk[0]})\n"
-            schema_str = schema_str.rstrip(',\n') + "\n);\n\n"
-    return schema_str
+            column_names = ", ".join([col['column_name'] for col in columns])
+            schema_parts.append(f"{table_name}({column_names})")
+            
+        return "\n".join(schema_parts)
 
-# --- NEW: Prompt generation now includes conversation history ---
-# In app/main.py, replace the existing generate_prompt function with this one.
-
+# --- Prompt Generation (Unchanged logic, now uses cached schema) ---
 def generate_prompt(schema, history):
-    # Format the conversation history for the prompt
-    conversation_log = ""
-    for turn in history[:-1]:  # Exclude the latest question
-        if turn.role == 'user':
-            conversation_log += f"User: {turn.content}\n"
-        elif turn.role == 'assistant':
-            conversation_log += f"Assistant's SQL Output: {turn.content}\n"
-
+    conversation_log = "\n".join(
+        f"{turn.role}: {turn.content}" for turn in history[:-1]
+    )
     last_question = history[-1].content
-
-    prompt = f"""You are a world-class PostgreSQL query writer AI. Your task is to write a single, valid PostgreSQL query to answer the user's final question, using the provided database schema and conversation history as context.
+    
+    prompt = f"""You are a world-class PostgreSQL query writer AI. Your task is to write a single, valid PostgreSQL query to answer the user's final question.
 
 ### IMMUTABLE RULES:
-1.  **YOU MUST ONLY USE TABLES AND COLUMNS FROM THE SCHEMA PROVIDED BELOW.** Do not invent columns like 'e.manager' or tables that are not listed.
-2.  The `employees` table **DOES NOT** have a 'manager' column. The manager's name for a department is ONLY in the 'manager' column of the `departments` table.
-3.  Analyze the `Conversation History` to understand follow-up questions (e.g., references like "his", "her", "that").
-4.  If the conversation history is empty or unclear, rely solely on the user's final question and the schema.
-5.  Your output **MUST BE ONLY THE SQL QUERY**. No explanations, no markdown, just the raw SQL.
+1.  **YOU MUST ONLY USE THE TABLES AND COLUMNS FROM THE COMPRESSED SCHEMA PROVIDED BELOW.**
+2.  The schema is represented as `table_name(column1, column2)`.
+3.  Analyze the `Conversation History` to resolve references (like "his", "her", "that").
+4.  Your output **MUST BE ONLY THE SQL QUERY**. No explanations or markdown.
 
-### DATABASE SCHEMA (Ground Truth):
+### COMPRESSED DATABASE SCHEMA:
 {schema}
 
-### CONVERSATION HISTORY (Context):
+### CONVERSATION HISTORY:
 {conversation_log if conversation_log else "No previous conversation."}
 
-### FINAL USER QUESTION (Your Task):
+### FINAL USER QUESTION:
 {last_question}
 
 ### SQL QUERY:
@@ -101,52 +160,55 @@ def generate_prompt(schema, history):
     return prompt.strip()
 
 
+# --- NEW: Fully Asynchronous API Endpoint ---
 @app.post("/query")
 async def process_query(request: QueryRequest):
-    conn = None
+    # 1. Generate Cache Key from history and schema hash
+    history_str = json.dumps([turn.dict() for turn in request.history])
+    cache_key_hash = hashlib.sha256((history_str + DB_SCHEMA_HASH).encode()).hexdigest()
+
+    # 2. Check Cache First
+    cached_response = await get_from_cache(cache_key_hash)
+    if cached_response:
+        print(f"CACHE HIT for key: {cache_key_hash}")
+        return cached_response
+
+    print(f"CACHE MISS for key: {cache_key_hash}")
+
+    # 3. Generate Prompt
+    prompt = generate_prompt(DB_SCHEMA_CACHE, request.history)
+
+    # 4. Call LLM (Cache Miss)
     try:
-        conn = get_db_connection()
-        schema = get_db_schema(conn)
-        # Pass the full history to the prompt generator
-        prompt = generate_prompt(schema, request.history)
-        
-        # The LLM prompt now contains history, but we only send the final prompt to the model
-        client = ollama.Client(host=OLLAMA_HOST)
-        response = client.chat(
-            model=LLM_MODEL,
+        response = await ollama_client.chat(
+            model=os.getenv("LLM_MODEL", "gemma:2b"),
             messages=[{'role': 'user', 'content': prompt}],
             options={'temperature': 0.0}
         )
         raw_sql = response['message']['content'].strip()
-        
-        sql_match = re.search(r"```(?:sql)?\s*(.*?)\s*```", raw_sql, re.DOTALL)
-        if sql_match:
-            sql_query = sql_match.group(1).strip()
-        else:
-            sql_query = raw_sql
-
-        if sql_query.endswith(';'):
-            sql_query = sql_query[:-1]
-
-        print(f"--- Extracted SQL ---\n{sql_query}\n---------------------")
-
-        with conn.cursor() as cur:
-            cur.execute(sql_query)
-            if cur.description:
-                columns = [desc[0] for desc in cur.description]
-                results = [dict(zip(columns, row)) for row in cur.fetchall()]
-            else:
-                results = {"status": "success", "rows_affected": cur.rowcount}
-        
-        return {"question": request.history[-1].content, "sql_query": sql_query, "result": results}
-
-    except psycopg2.Error as e:
-        print(f"Database Error: {e}")
-        raise HTTPException(status_code=400, detail=f"Database Error: {str(e)}")
     except Exception as e:
-        print(f"An unexpected error occurred: {e}")
-        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
-    finally:
-        if conn is not None:
-            conn.close()
-            print("Database connection closed.")
+        raise HTTPException(status_code=503, detail=f"LLM service unavailable: {e}")
+
+    # 5. Execute SQL against DB
+    sql_match = re.search(r"```(?:sql)?\s*(.*?)\s*```", raw_sql, re.DOTALL)
+    sql_query = (sql_match.group(1).strip() if sql_match else raw_sql).rstrip(';')
+    
+    print(f"--- Extracted SQL ---\n{sql_query}\n---------------------")
+
+    try:
+        async with db_pool.acquire() as conn:
+            stmt = await conn.prepare(sql_query)
+            records = await stmt.fetch()
+            results = [dict(record) for record in records] if records else []
+    except asyncpg.PostgresError as e:
+        raise HTTPException(status_code=400, detail=f"Database Error: {str(e)}")
+
+    # 6. Format and Cache the Final Response
+    final_response = {
+        "question": request.history[-1].content,
+        "sql_query": sql_query,
+        "result": results
+    }
+    await set_to_cache(cache_key_hash, final_response)
+    
+    return final_response

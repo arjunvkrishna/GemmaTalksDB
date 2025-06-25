@@ -3,3 +3,5 @@ uvicorn
 psycopg2-binary
 ollama
 python-dotenv
+asyncpg
+aiosqlite

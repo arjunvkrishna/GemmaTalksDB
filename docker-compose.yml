@@ -37,7 +37,10 @@ services:
     restart: always
     ports:
       - "8000:8000"
-    # Also corrected the 'app' service's environment for consistency.
+    # --- ADD THIS VOLUME ---
+    volumes:
+      - ./app_data:/app/data
+    # -----------------------
     environment:
       DB_HOST: db
       POSTGRES_DB: ${POSTGRES_DB:-mydb}
