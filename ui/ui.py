@@ -5,13 +5,13 @@ import json
 
 # --- Page Configuration ---
 st.set_page_config(
-    page_title="GemmaTalksDB",
+    page_title="AISavvy.py",
     page_icon="🗣️",
     layout="wide"
 )
 
 # --- App Title ---
-st.title("GemmaTalksDB 🗣️↔️🐘")
+st.title("AISavvy.py 🗣️↔️🐘")
 st.markdown("A conversational assistant for your PostgreSQL database.")
 st.markdown("---")
 
