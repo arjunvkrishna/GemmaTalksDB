@@ -10,18 +10,29 @@ DROP TABLE IF EXISTS kitchen_products CASCADE;
 DROP TABLE IF EXISTS salary CASCADE;
 DROP TABLE IF EXISTS chef CASCADE;
 DROP TABLE IF EXISTS employee CASCADE;
+DROP TABLE IF EXISTS departments CASCADE; -- Added for complete cleanup
 
 
 -- =============================================================================
 -- 1. Create Tables
 -- =============================================================================
+
+-- NEW: Added the missing 'departments' table
+CREATE TABLE departments (
+    department_id SERIAL PRIMARY KEY,
+    department_name VARCHAR(100) NOT NULL UNIQUE,
+    manager VARCHAR(100)
+);
+
 CREATE TABLE employee (
     employee_id SERIAL PRIMARY KEY,
     first_name VARCHAR(50) NOT NULL,
     last_name VARCHAR(50) NOT NULL,
     role VARCHAR(50) NOT NULL,
+    department_id INT, -- Added department foreign key
     hire_date DATE NOT NULL,
-    phone_number VARCHAR(20)
+    phone_number VARCHAR(20),
+    CONSTRAINT fk_employee_department FOREIGN KEY(department_id) REFERENCES departments(department_id)
 );
 
 CREATE TABLE chef (
@@ -80,13 +91,22 @@ CREATE TABLE miscellaneous_expense (
 -- =============================================================================
 -- 2. Populate Tables with Data
 -- =============================================================================
-INSERT INTO employee (first_name, last_name, role, hire_date, phone_number) VALUES
-('Arjun', 'Verma', 'Head Chef', '2022-01-15', '9876543210'),
-('Priya', 'Sharma', 'Sous Chef', '2022-08-01', '9876543211'),
-('Rohan', 'Singh', 'Manager', '2021-11-20', '9876543212'),
-('Sneha', 'Gupta', 'Waiter', '2023-03-10', '9876543213'),
-('Vikram', 'Patel', 'Waiter', '2023-03-10', '9876543214'),
-('Emily', 'White', 'Marketing Head', '2023-09-01', '9876543215');
+
+-- NEW: Populate the 'departments' table first
+INSERT INTO departments (department_id, department_name, manager) VALUES
+(1, 'Kitchen', 'Arjun Verma'),
+(2, 'Front of House', 'Rohan Singh'),
+(3, 'Management', 'Rohan Singh'),
+(4, 'Marketing', 'Emily White');
+
+
+INSERT INTO employee (first_name, last_name, role, department_id, hire_date, phone_number) VALUES
+('Arjun', 'Verma', 'Head Chef', 1, '2022-01-15', '9876543210'),
+('Priya', 'Sharma', 'Sous Chef', 1, '2022-08-01', '9876543211'),
+('Rohan', 'Singh', 'Manager', 3, '2021-11-20', '9876543212'),
+('Sneha', 'Gupta', 'Waiter', 2, '2023-03-10', '9876543213'),
+('Vikram', 'Patel', 'Waiter', 2, '2023-03-10', '9876543214'),
+('Emily', 'White', 'Marketing Head', 4, '2023-09-01', '9876543215');
 
 INSERT INTO chef (employee_id, specialty, certification) VALUES
 (1, 'Continental Cuisine', 'Le Cordon Bleu'),
@@ -139,4 +159,3 @@ GRANT SELECT ON ALL TABLES IN SCHEMA public TO aisavvy;
 
 -- Ensure that any tables created in the future will also be readable.
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO aisavvy;
-
