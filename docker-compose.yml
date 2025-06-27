@@ -1,18 +1,17 @@
 version: '3.8'
 
+# This file orchestrates all six services of the AISavvy platform.
 services:
+
+  # 1. The PostgreSQL Database Service
   db:
     image: postgres:16
     container_name: postgres-db
     restart: always
-    # Corrected 'environment' section using the dictionary/map syntax.
-    # Note the absence of the '-' hyphen.
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-my_password}
       POSTGRES_DB: ${POSTGRES_DB:-mydb}
-    ports:
-      - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql
@@ -22,47 +21,82 @@ services:
       timeout: 5s
       retries: 5
 
+  # 2. The Ollama LLM Serving Service
   ollama:
     image: ollama/ollama
-    container_name: gemma-ollama
+    container_name: ollama-service
     restart: always
-    ports:
-      - "11434:11434"
     volumes:
       - ollama_data:/root/.ollama
 
+  # 3. The Backend API (The "Brain" of the application)
   app:
     build: ./app
-    container_name: nl-to-sql-app
+    container_name: aisavvy-api
     restart: always
     ports:
       - "8000:8000"
-    # --- ADD THIS VOLUME ---
     volumes:
       - ./app_data:/app/data
-    # -----------------------
     environment:
       DB_HOST: db
       POSTGRES_DB: ${POSTGRES_DB:-mydb}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-my_password}
       OLLAMA_HOST: http://ollama:11434
+      LLM_MODEL: llama3
     depends_on:
       db:
         condition: service_healthy
       ollama:
         condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
-  # --- NEW UI SERVICE ---
+  # 4. The Streamlit Web Interface
   ui:
     build: ./ui
-    container_name: sqlingua-ui
+    container_name: aisavvy-ui
     restart: always
     ports:
       - "8501:8501"
+    environment:
+      STT_API_URL: http://stt-service:8080/inference
     depends_on:
-      - app
+      app:
+        condition: service_healthy
 
+  # 5. The Telegram Bot Service
+  telegram-bot:
+    build: ./telegram_bot
+    container_name: aisavvy-telegram-bot
+    restart: always
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      API_URL: http://app:8000/query
+      STT_API_URL: http://stt-service:8080/inference
+    depends_on:
+      app:
+        condition: service_healthy
+
+  # 6. The Speech-to-Text (Whisper) Service
+# --- SPEECH-TO-TEXT SERVICE (FINAL-FINAL-FINAL CORRECTED VERSION) ---
+  stt-service:
+    image: ghcr.io/ggerganov/whisper.cpp:main
+    container_name: aisavvy-stt-service
+    restart: always
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./stt_model:/models
+    # This command uses the exact, verified path to the server executable.
+    command: /app/build/bin/server -m /models/ggml-base.en.bin --host 0.0.0.0 --port 8080
+
+# Named volumes for persistent data storage
 volumes:
   pgdata:
   ollama_data:

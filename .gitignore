@@ -1,0 +1,5 @@
+app_data
+.env
+#stt_model/ggml-base.en.bin:Zone.Identifier
+#stt_model/gggml-base.en.bin
+#stt_model/

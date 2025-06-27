@@ -1,144 +1,112 @@
-# GemmaTalksDB 🗣️↔️🐘
+# AISavvy 🧠↔️📊
 
-**Talk to your PostgreSQL database in plain English. A fully containerized, local-first, Natural Language to SQL engine powered by Gemma, Ollama, and Docker.**
+**An intelligent, conversational data platform. Chat with your PostgreSQL database, visualize results, and get AI-powered assistance, all running locally with Docker.**
 
-This project provides a complete, ready-to-use system that accepts natural language questions via an API, uses a local Large Language Model (LLM) to translate them into SQL queries, executes them against a PostgreSQL database, and returns the results.
+AISavvy is a full-featured application that transforms how you interact with your data. It provides a multi-page web interface to ask questions in plain English, get back not just data but also charts, see a complete history of your interactions, visualize your database schema, and even get AI-powered suggestions to fix failed queries.
 
 ---
 
-## 🏛️ Architecture
+## ✨ Features
 
-The entire system is orchestrated with Docker Compose and consists of three main services that work together seamlessly:
+AISavvy is more than just a Text-to-SQL tool; it's a complete data intelligence platform with a rich feature set:
 
-1.  **`db` (PostgreSQL):** The database service that stores your data. It's automatically initialized with a sample schema and data on first startup.
-2.  **`ollama` (Ollama + Gemma):** The LLM service. It downloads and serves the Gemma LLM, making it available for inference without any external API calls.
-3.  **`app` (The GemmaTalksDB API):** A Python FastAPI application that acts as the brain of the operation. It receives user requests, orchestrates the prompt engineering, communicates with the LLM, executes the generated SQL, and returns the final result.
+* **Conversational AI for SQL:** Engage in a continuous dialogue with your data. The AI understands context from previous questions.
+* **Interactive Data Visualization:** Automatically detects when a chart is appropriate and generates bar, line, or pie charts from your query results using Altair.
+* **AI-Powered SQL Auto-Fix:** If a generated query fails, the AI analyzes the error and suggests a corrected version of the SQL.
+* **Persistent Query History & Export:** A dedicated page shows a complete log of all questions, the generated SQL, and their success status. You can export this history as a `.csv` or `.sql` file.
+* **Database Schema Visualizer:** Automatically generates and displays an Entity-Relationship Diagram (ERD) of your database schema using Graphviz.
+* **High-Performance Backend:** Built with FastAPI using fully `async` I/O for database and LLM calls, ensuring high throughput.
+* **LLM Response Caching:** Uses a local SQLite database to cache responses, providing instantaneous answers to repeated questions and reducing computational load.
+* **Local & Private:** Runs entirely on your local machine with **Ollama** and **Llama 3**. No data leaves your system.
+* **Fully Containerized:** The entire multi-service platform is defined and orchestrated with Docker Compose for a simple, one-command setup.
 
-### System Flow
+---
 
-Here is how a request flows through the system:
+## 🛠️ Tech Stack
 
-```mermaid
-graph TD
-    A[👨‍💻 User] -- "POST /query with a question" --> B(🚀 GemmaTalksDB API);
-    B -- "1. Fetch schema" --> C(🐘 PostgreSQL DB);
-    C -- "2. Return schema" --> B;
-    B -- "3. Send prompt (question + schema)" --> D(🧠 Ollama / Gemma LLM);
-    D -- "4. Return generated SQL query" --> B;
-    B -- "5. Execute SQL query" --> C;
-    C -- "6. Return query results" --> B;
-    B -- "7. Send JSON response" --> A;
+* **Backend:** Python, FastAPI, AsyncPG, AIOSQLite
+* **Frontend:** Streamlit, Pandas, Altair
+* **Database:** PostgreSQL
+* **LLM Serving:** Ollama
+* **LLM Model:** Llama 3 (default)
+* **Containerization:** Docker & Docker Compose
 
-✨ Features
+---
 
-    Conversational Queries: Ask questions in natural English instead of writing complex SQL.
-    Local & Private: Runs entirely on your local machine. No data leaves your system, and no external API keys are needed.
-    Fully Containerized: One command (docker-compose up) to set up and run the entire stack.
-    Dynamic Schema Introspection: Automatically detects your database schema, making it adaptable to other tables.
-    Advanced Prompt Engineering: Utilizes few-shot prompting to guide the LLM, improving accuracy and reducing errors.
-    Extensible: Easy to modify, experiment with different LLMs (like Llama3, Mistral), or integrate into larger applications.
+## 🚀 Getting Started
 
-🛠️ Tech Stack
+The entire application can be deployed with a single script.
 
-    Backend: Python, FastAPI
-    Database: PostgreSQL
-    LLM Serving: Ollama
-    LLM Model: Google's Gemma
-    Containerization: Docker & Docker Compose
+### Prerequisites
 
-🚀 Getting Started
+* **Docker Desktop:** Ensure you have Docker and Docker Compose installed and running.
 
-Follow these steps to get the project up and running on your local machine.
-Prerequisites
+### Deployment
 
-    Docker Desktop: Ensure you have Docker and Docker Compose installed and running. You can download it from the official Docker website.
+1.  **Clone the Repository:**
+    ```bash
+    git clone [https://github.com/](https://github.com/)[your-github-username]/AISavvy.git
+    cd AISavvy
+    ```
 
-Installation
+2.  **Make the Deployment Script Executable:**
+    ```bash
+    chmod +x deploy.sh
+    ```
 
-    Clone the repository:
-    Bash
+3.  **Run the Script:**
+    This will build all the images, start the containers, download the Llama 3 model, and print the UI access URL.
+    ```bash
+    ./deploy.sh
+    ```
 
-git clone https://github.com/arjunvkrishna/GemmaTalksDB.git
+4.  **Access the Application:**
+    Open your web browser and navigate to **`http://localhost:8501`**.
 
-Navigate to the project directory:
-Bash
+<details>
+<summary>Click to see the contents of the deploy.sh script</summary>
 
-cd GemmaTalksDB
+```sh
+#!/bin/bash
+# AISavvy Deployment Script
 
-Build and run the services:
-This command will build the API image, pull the Postgres and Ollama images, and start all three containers.
-Bash
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m' # No Color
 
-docker-compose up --build
+echo -e "<span class="math-inline">\{YELLOW\}Starting the AISavvy deployment\.\.\.</span>{NC}"
 
-Your terminal will now show a continuous stream of logs from all services.
+echo -e "\n${YELLOW}[1/3] Building and starting all services...${NC}"
+docker-compose up --build -d
+if [ <span class="math-inline">? \-ne 0 \]; then
+echo \-e "\\n</span>{RED}Error: Docker Compose failed to start services.<span class="math-inline">\{NC\}"
+exit 1
+fi
+echo \-e "</span>{GREEN}✅ Services started successfully!<span class="math-inline">\{NC\}"
+echo \-e "\\n</span>{YELLOW}[2/3] Downloading the Llama 3 LLM model...${NC}"
+docker-compose exec ollama ollama pull llama3
+if [ <span class="math-inline">? \-ne 0 \]; then
+echo \-e "\\n</span>{RED}Error: Failed to download the Llama 3 model.<span class="math-inline">\{NC\}"
+exit 1
+fi
+echo \-e "</span>{GREEN}✅ Llama 3 model downloaded successfully!<span class="math-inline">\{NC\}"
+echo \-e "\\n</span>{YELLOW}[3/3] Deployment complete!<span class="math-inline">\{NC\}"
+echo \-e "\\n</span>{GREEN}=====================================================<span class="math-inline">\{NC\}"
+echo \-e "</span>{GREEN}    🚀 Your AISavvy application is ready! 🚀    <span class="math-inline">\{NC\}"
+echo \-e "</span>{GREEN}=====================================================<span class="math-inline">\{NC\}"
+echo \-e "\\nAccess the web UI at the following URL\:"
+echo \-e "</span>{YELLOW}👉 http://localhost:8501 ${NC}\n"
+```
 
-Download the LLM Model (One-time setup):
-The Ollama container starts empty. You need to tell it to download the Gemma model.
-Open a new terminal window, navigate to the same project directory, and run:
-Bash
+</details>
 
-    docker-compose exec ollama ollama pull gemma:2b
+---
 
-    Wait for the download to complete (it's about 1.7 GB).
+## 🖥️ Using the Application
 
-The system is now fully operational!
-💡 Usage
+The user interface is a multi-page Streamlit application with a navigation sidebar on the left.
 
-The API is available at http://localhost:8000. You can interact with it using any API client or the curl command.
-Example 1: Asking for a manager
-Bash
-
-curl -X POST "http://localhost:8000/query" \
--H "Content-Type: application/json" \
--d '{"question": "Who is the manager of the Sales department?"}'
-
-✅ Expected Success Response:
-JSON
-
-{
-  "question": "Who is the manager of the Sales department?",
-  "sql_query": "SELECT manager FROM departments WHERE department_name = 'Sales'",
-  "result": [
-    {
-      "manager": "Charlie Brown"
-    }
-  ]
-}
-
-Example 2: Asking for an employee count
-Bash
-
-curl -X POST "http://localhost:8000/query" \
--H "Content-Type: application/json" \
--d '{"question": "How many employees are there in the Engineering department?"}'
-
-✅ Expected Success Response:
-JSON
-
-{
-  "question": "How many employees are there in the Engineering department?",
-  "sql_query": "SELECT COUNT(e.employee_id) AS total_employees FROM employees e INNER JOIN departments d ON e.department_id = d.department_id WHERE d.department_name = 'Engineering'",
-  "result": [
-    {
-      "total_employees": 3
-    }
-  ]
-}
-
-🧠 Prompt Engineering Journey
-
-A key part of this project was refining the prompt sent to the LLM to improve its accuracy. We progressed through several versions:
-
-    V1 (Basic): A simple request to convert a question to SQL. This often led to errors.
-    V2 (Schema-Aware): We provided the database schema (table and column names) in the prompt. This improved results but still led to hallucinations (e.g., using id instead of department_id).
-    V3 (Rich Schema & Strict Rules): The schema was formatted as CREATE TABLE statements, and stricter instructions were added. This solved most syntax errors but not all semantic ones.
-    V4 (Few-Shot Prompt - Final Version): The prompt was enhanced with a concrete example (a "few-shot" example) of a similar question and the correct SQL. This provided a template for the LLM to follow, finally resolving the semantic ambiguity and producing the correct query consistently.
-
-📈 Future Improvements
-
-    Web Interface: Build a simple frontend using Streamlit or Gradio for a more user-friendly chat interface.
-    Support for Other LLMs: Experiment with different models available on Ollama (like llama3 or mistral) by simply changing the model name in main.py.
-    Enhanced Security: Implement a query sanitization layer or run the database user in a read-only mode for production-like environments.
-    Conversation History: Allow the API to remember the context of previous questions in a conversation.
-
+* **AISavvy | Chat:** The main page for your conversational interaction with the database.
+* **Query History:** View, search, and export all past queries.
+* **Schema Visualizer:** See a live-generated ERD of your database tables.
