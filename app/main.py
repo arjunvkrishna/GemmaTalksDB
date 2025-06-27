@@ -12,7 +12,8 @@ from ollama import AsyncClient
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-# --- In-memory caches for startup data ---
+# --- Configuration & In-memory Caches ---
+CACHE_DB_PATH = "/app/data/cache.db"
 DB_SCHEMA_CACHE = ""
 DB_HINTS_CACHE = ""
 DB_SCHEMA_HASH = ""
@@ -130,7 +131,6 @@ async def get_schema_and_hints():
 
 # --- Prompt Generation Functions ---
 def generate_sql_prompt(schema, hints, history: List[Turn]):
-    # --- FIXED: The list comprehension now correctly handles Pydantic objects ---
     conversation_log = "\n".join([
         f"User: {turn.content}" if turn.role == 'user'
         else f"Assistant (Result): {json.dumps(turn.content['result'], default=json_default_encoder)}"
