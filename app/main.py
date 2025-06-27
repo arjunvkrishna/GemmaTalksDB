@@ -12,8 +12,7 @@ from ollama import AsyncClient
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-# --- Configuration & In-memory Caches ---
-CACHE_DB_PATH = "/app/data/cache.db"
+# --- In-memory caches for startup data ---
 DB_SCHEMA_CACHE = ""
 DB_HINTS_CACHE = ""
 DB_SCHEMA_HASH = ""
@@ -29,13 +28,8 @@ def json_default_encoder(obj):
 # --- FastAPI Lifespan Manager for Startup/Shutdown Events ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    Handles application startup and shutdown events. This function runs only once.
-    """
     print("Application startup...")
     global db_pool, ollama_client, DB_SCHEMA_CACHE, DB_HINTS_CACHE, DB_SCHEMA_HASH
-    
-    # 1. Initialize PostgreSQL Connection Pool
     try:
         db_pool = await asyncpg.create_pool(
             user=os.getenv("POSTGRES_USER_APP", "aisavvy"),
@@ -47,16 +41,11 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"FATAL: Could not connect to PostgreSQL: {e}")
         raise
-
-    # 2. Initialize Ollama Client
-    ollama_client = AsyncClient(host=os.getenv("OLLAMA_HOST", "http://ollama:11434"))
-    print("Ollama async client initialized.")
     
-    # 3. Initialize Cache and Log Database
+    ollama_client = AsyncClient(host=os.getenv("OLLAMA_HOST", "http://ollama:11434"))
     await setup_databases()
     print("Cache database initialized.")
     
-    # 4. Pre-load DB Schema and Value Hints
     DB_SCHEMA_CACHE, DB_HINTS_CACHE, _ = await get_schema_and_hints()
     DB_SCHEMA_HASH = hashlib.sha256((DB_SCHEMA_CACHE + DB_HINTS_CACHE).encode()).hexdigest()
     print("Database schema and value hints pre-loaded and hashed.")
@@ -64,16 +53,14 @@ async def lifespan(app: FastAPI):
     print("Application startup complete.")
     yield
     
-    # --- On Shutdown ---
     print("Application shutdown...")
     if db_pool:
         await db_pool.close()
         print("Database connection pool closed.")
 
-# --- FastAPI App Initialization ---
 app = FastAPI(
     title="AISavvy API v5",
-    description="A feature-rich API for Conversational SQL with relevance checking and contextual explanations.",
+    description="API for Conversational SQL with relevance and context handling.",
     lifespan=lifespan
 )
 
@@ -109,12 +96,18 @@ async def get_from_cache(key: str):
 
 async def set_to_cache(key: str, response: dict):
     async with aiosqlite.connect(CACHE_DB_PATH) as db:
-        await db.execute("INSERT OR REPLACE INTO llm_cache (key, response) VALUES (?, ?)", (key, json.dumps(response, default=json_default_encoder)))
+        await db.execute(
+            "INSERT OR REPLACE INTO llm_cache (key, response) VALUES (?, ?)",
+            (key, json.dumps(response, default=json_default_encoder)),
+        )
         await db.commit()
 
 async def log_query(question, sql, success, error=""):
     async with aiosqlite.connect(CACHE_DB_PATH) as db:
-        await db.execute("INSERT INTO query_log (question, sql_query, success, error_message) VALUES (?, ?, ?, ?)", (question, sql, success, error))
+        await db.execute(
+            "INSERT INTO query_log (question, sql_query, success, error_message) VALUES (?, ?, ?, ?)",
+            (question, sql, success, error)
+        )
         await db.commit()
 
 async def get_schema_and_hints():
@@ -136,40 +129,54 @@ async def get_schema_and_hints():
         return "\n".join(schema_parts), "\n".join(hint_parts), "\n".join(dot_parts) + "\n}"
 
 # --- Prompt Generation Functions ---
-def generate_sql_prompt(schema, hints, history):
-    conversation_log = "\n".join([f"User: {turn['content']}" if turn['role'] == 'user' else f"Assistant (Result): {json.dumps(turn['content']['result'], default=json_default_encoder)}" for turn in history[:-1] if isinstance(turn.get('content'), dict) and 'result' in turn['content'] or turn['role'] == 'user'])
-    last_question = history[-1]['content']
+def generate_sql_prompt(schema, hints, history: List[Turn]):
+    # --- FIXED: The list comprehension now correctly handles Pydantic objects ---
+    conversation_log = "\n".join([
+        f"User: {turn.content}" if turn.role == 'user'
+        else f"Assistant (Result): {json.dumps(turn.content['result'], default=json_default_encoder)}"
+        for turn in history[:-1]
+        if turn.role == 'user' or (isinstance(turn.content, dict) and 'result' in turn.content)
+    ])
+    
+    last_question = history[-1].content
     
     return f"""You are a world-class PostgreSQL query writer AI.
+
 ### RULES:
 1. If the user's question is ambiguous, respond ONLY with `CLARIFY: <your clarifying question>`.
-2. If asked for a "total", "count", "average", etc., you MUST use the appropriate SQL aggregate function.
-3. For filtering, strictly use the values provided in the HINTS section when possible (e.g., use 'Engineering', not 'Engineering Department').
+2. If asked for a "total", "count", "average", etc., you MUST use the appropriate SQL aggregate function (`SUM`, `COUNT`, `AVG`).
+3. For filtering, strictly use the values in HINTS when possible (e.g., use 'Engineering', not 'Engineering Department').
 4. Your output MUST BE ONLY the SQL query or a `CLARIFY:` question.
-### SCHEMA:
+
+### COMPRESSED DATABASE SCHEMA:
 {schema}
+
 ### HINTS ON COLUMN VALUES:
 {hints if hints else "No hints available."}
-### EXAMPLES:
-User: "Show departments with more than 2 employees"
+
+### QUERY EXAMPLES:
+User: "Show departments that have more than 2 employees"
 SQL: SELECT d.department_name FROM employees e JOIN departments d ON e.department_id = d.department_id GROUP BY d.department_name HAVING COUNT(e.employee_id) > 2;
+
 ### HISTORY:
 {conversation_log if conversation_log else "No previous conversation."}
+
 ### FINAL QUESTION:
 {last_question}
+
 ### RESPONSE:
 """
 
 def generate_relevance_prompt(schema, question):
-    return f"Is the following question related to querying a database with the schema provided? Schema: {schema}\nUser's Question: {question}\nAnswer ONLY with 'YES' or 'NO'."
+    return f"Is the following question related to querying a database with this schema? Schema: {schema}\nUser's Question: {question}\nAnswer ONLY with 'YES' or 'NO'."
 
 def generate_no_results_prompt(question, sql_query):
-    return f"The user asked: '{question}'. The query `{sql_query}` ran successfully but returned no rows. In one friendly sentence, explain why there were no results. Example: 'It appears there are no employees that match your criteria in the Marketing department.' Respond ONLY with the single explanatory sentence."
+    return f"The user asked: '{question}'. The query `{sql_query}` ran successfully but returned no rows. In one friendly sentence, explain why there were no results. Example: 'It appears there are no employees that match your criteria.' Respond ONLY with the sentence."
 
 # --- API Endpoints ---
 @app.get("/", tags=["Health Check"])
 async def read_root():
-    return {"status": "healthy", "message": "Welcome to the AISavvy API"}
+    return {"status": "healthy"}
 
 @app.post("/query", tags=["Core Logic"])
 async def process_query(request: QueryRequest):
@@ -218,8 +225,14 @@ async def process_query(request: QueryRequest):
     except asyncpg.PostgresError as e:
         error_message = str(e)
         await log_query(last_question, sql_query, False, error_message)
-        # Auto-fix logic can be triggered here if needed
-        raise HTTPException(status_code=400, detail={"error": error_message})
+        suggested_fix = "Could not generate a fix."
+        try:
+            fix_prompt = f"The following SQL query failed: `{sql_query}`. The database error was: `{error_message}`. Based on the user's question: `{last_question}` and the schema: `{DB_SCHEMA_CACHE}`, provide a corrected SQL query. Respond with ONLY the corrected SQL query."
+            fix_response = await ollama_client.chat(model=os.getenv("LLM_MODEL", "llama3"), messages=[{'role': 'user', 'content': fix_prompt}])
+            suggested_fix = fix_response['message']['content'].strip()
+        except Exception:
+            pass
+        raise HTTPException(status_code=400, detail={"error": error_message, "suggested_fix": suggested_fix})
 
     # 5. Handle Empty Results
     if not results:
@@ -230,9 +243,22 @@ async def process_query(request: QueryRequest):
         except Exception:
             return {"no_results_explanation": "The query executed successfully but returned no data."}
     
-    # 6. Generate Explanation & DataViz Spec (Simplified for now)
-    explanation = "An explanation for this query."
-    chart_spec = {"chart_needed": False}
+    # 6. Generate Explanation & DataViz Spec
+    explanation, chart_spec = "Could not generate explanation.", {"chart_needed": False}
+    try:
+        explain_prompt = f"In one simple, plain English sentence, explain what this SQL query does: `{sql_query}`"
+        explain_response = await ollama_client.chat(model=os.getenv("LLM_MODEL", "llama3"), messages=[{'role': 'user', 'content': explain_prompt}])
+        explanation = explain_response['message']['content'].strip()
+    except Exception:
+        pass
+
+    if results:
+        try:
+            viz_prompt = f"Given the user's question: '{last_question}' and these resulting data columns: {list(results[0].keys())}. Should this be visualized? If yes, suggest a chart type (bar, line, or pie) and columns for x/y axes. Respond ONLY with a single, valid JSON object like {{\"chart_needed\": true, \"chart_type\": \"bar\", \"x_column\": \"name\", \"y_column\": \"salary\"}} or {{\"chart_needed\": false}}."
+            viz_response = await ollama_client.chat(model=os.getenv("LLM_MODEL", "llama3"), messages=[{'role': 'user', 'content': viz_prompt}])
+            chart_spec = json.loads(viz_response['message']['content'].strip())
+        except Exception:
+            chart_spec = {"chart_needed": False}
     
     final_response = {"question": last_question, "sql_query": sql_query, "explanation": explanation, "result": results, "chart_spec": chart_spec}
     await set_to_cache(cache_key_hash, final_response)
