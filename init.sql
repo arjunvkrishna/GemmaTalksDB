@@ -41,7 +41,7 @@ INSERT INTO employees (first_name, last_name, email, hire_date, salary, departme
 -- =================================================================
 
 -- 1. Create the user with a secure password
-CREATE USER aisavvy WITH PASSWORD 'a_very_secure_password_change_me';
+CREATE USER aisavvy WITH PASSWORD 'my_password';
 
 -- 2. Grant permission to connect to the specific database
 GRANT CONNECT ON DATABASE mydb TO aisavvy;

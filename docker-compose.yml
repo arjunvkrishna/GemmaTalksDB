@@ -31,6 +31,11 @@ services:
       - ollama_data:/root/.ollama
 
   # 3. The Backend API (The "Brain" of the application)
+# In docker-compose.yml
+  
+  # ... (db and ollama services are unchanged) ...
+
+  # 3. The Backend API (The "Brain" of the application)
   app:
     build: ./app
     container_name: aisavvy-api
@@ -40,11 +45,11 @@ services:
     volumes:
       - ./app_data:/app/data
     environment:
-      # The API uses the secure, READ-ONLY app user credentials to connect
-      POSTGRES_USER: ${POSTGRES_USER_APP}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD_APP}
+      # ... (environment variables are unchanged)
       DB_HOST: db
       POSTGRES_DB: mydb
+      POSTGRES_USER: ${POSTGRES_USER_APP}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD_APP}
       OLLAMA_HOST: http://ollama:11434
       LLM_MODEL: llama3
     depends_on:
@@ -52,13 +57,7 @@ services:
         condition: service_healthy
       ollama:
         condition: service_started
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
-
+      
   # 4. The Streamlit Web Interface
   ui:
     build: ./ui
@@ -68,7 +67,7 @@ services:
       - "8501:8501"
     depends_on:
       app:
-        condition: service_healthy
+        condition: service_started
 
   # 5. The Telegram Bot Service
   telegram-bot:
@@ -80,7 +79,7 @@ services:
       API_URL: http://app:8000/query
     depends_on:
       app:
-        condition: service_healthy
+        condition: service_started
 
 # Named volumes for persistent data storage
 volumes:
