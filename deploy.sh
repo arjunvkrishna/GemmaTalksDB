@@ -24,7 +24,7 @@ echo -e "${GREEN}✅ Services started successfully!${NC}"
 
 # Step 2: Pull the Llama 3 LLM model (the default powerful model)
 echo -e "\n${YELLOW}[2/3] Downloading the Llama 3 LLM model. This may take several minutes...${NC}"
-#docker compose exec ollama ollama pull llama3
+docker compose exec ollama ollama pull llama3
 docker-compose exec ollama ollama pull phi3:mini
 
 if [ $? -ne 0 ]; then

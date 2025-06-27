@@ -34,3 +34,23 @@ INSERT INTO employees (first_name, last_name, email, hire_date, salary, departme
 ('Mary', 'Davis', 'mary.davis@example.com', '2021-08-01', 80000.00, 3),
 ('David', 'Wilson', 'david.wilson@example.com', '2023-11-22', 75000.00, 3),
 ('Susan', 'Taylor', 'susan.taylor@example.com', '2024-02-18', 95000.00, 1);
+
+
+-- =================================================================
+-- NEW: Create a dedicated, read-only user for the AISavvy application
+-- =================================================================
+
+-- 1. Create the user with a secure password
+CREATE USER aisavvy WITH PASSWORD 'a_very_secure_password_change_me';
+
+-- 2. Grant permission to connect to the specific database
+GRANT CONNECT ON DATABASE mydb TO aisavvy;
+
+-- 3. Grant permission to use the 'public' schema
+GRANT USAGE ON SCHEMA public TO aisavvy;
+
+-- 4. Grant ONLY SELECT (read) permissions on all tables in the public schema
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO aisavvy;
+
+-- Optional: Ensure future tables are also readable
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO aisavvy;

@@ -1,91 +1,88 @@
-# Specifies the version of the Docker Compose file format.
 version: '3.8'
 
-# Defines the services that make up your application.
+# This file orchestrates the five core services of the AISavvy platform.
 services:
-  # PostgreSQL database service
+
+  # 1. The PostgreSQL Database Service
   db:
     image: postgres:16
     container_name: postgres-db
     restart: always
     environment:
-      # Sets the default user, password, and database name.
-      # Uses environment variables from a .env file if they exist, otherwise uses defaults.
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-my_password}
-      POSTGRES_DB: ${POSTGRES_DB:-mydb}
+      # Use the SUPERUSER credentials for database creation and initialization
+      POSTGRES_USER: ${POSTGRES_USER_SUPER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD_SUPER}
+      POSTGRES_DB: mydb
     volumes:
-      # Persists PostgreSQL data using a named volume.
       - pgdata:/var/lib/postgresql/data
-      # Runs an initialization script on startup.
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
-      # Command to check if the database is ready to accept connections.
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-mydb}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER_SUPER} -d mydb"]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  # Ollama service for running large language models
+  # 2. The Ollama LLM Serving Service
   ollama:
     image: ollama/ollama
     container_name: ollama-service
     restart: always
     volumes:
-      # Persists Ollama models and data using a named volume.
       - ollama_data:/root/.ollama
 
-  # Main application service
+  # 3. The Backend API (The "Brain" of the application)
   app:
     build: ./app
     container_name: aisavvy-api
     restart: always
     ports:
-      # Maps port 8000 on the host to port 8000 in the container.
       - "8000:8000"
     volumes:
-      # Mounts a local directory for application data.
       - ./app_data:/app/data
     environment:
+      # The API uses the secure, READ-ONLY app user credentials to connect
+      POSTGRES_USER: ${POSTGRES_USER_APP}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD_APP}
       DB_HOST: db
-      POSTGRES_DB: ${POSTGRES_DB:-mydb}
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-my_password}
+      POSTGRES_DB: mydb
       OLLAMA_HOST: http://ollama:11434
       LLM_MODEL: llama3
     depends_on:
-      # Ensures 'db' is healthy and 'ollama' has started before this service starts.
       db:
         condition: service_healthy
       ollama:
         condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
-  # User interface service (e.g., Streamlit or Gradio)
+  # 4. The Streamlit Web Interface
   ui:
     build: ./ui
     container_name: aisavvy-ui
     restart: always
     ports:
-      # Maps port 8501 on the host to port 8501 in the container.
       - "8501:8501"
     depends_on:
-      # Ensures the 'app' service is started before this service starts.
-      - app
+      app:
+        condition: service_healthy
 
-  # Telegram bot service
+  # 5. The Telegram Bot Service
   telegram-bot:
     build: ./telegram_bot
     container_name: aisavvy-telegram-bot
     restart: always
     environment:
-      # Passes the Telegram bot token and API URL as environment variables.
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
       API_URL: http://app:8000/query
     depends_on:
-      # Ensures the 'app' service is started before this service starts.
-      - app
+      app:
+        condition: service_healthy
 
-# Defines the named volumes used by the services.
+# Named volumes for persistent data storage
 volumes:
   pgdata:
   ollama_data:
