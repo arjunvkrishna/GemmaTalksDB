@@ -1,6 +1,5 @@
 fastapi
 uvicorn
-ollama
+google-generativeai
 asyncpg
 aiosqlite
-fpdf2
