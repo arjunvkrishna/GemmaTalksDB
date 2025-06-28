@@ -3,3 +3,4 @@ uvicorn
 ollama
 asyncpg
 aiosqlite
+fpdf2

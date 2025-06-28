@@ -3,18 +3,68 @@ import requests
 import pandas as pd
 import json
 import altair as alt
+from fpdf import FPDF
+from io import BytesIO
 
+# --- Page Configuration ---
 st.set_page_config(page_title="AISavvy | Chat", page_icon="🧠", layout="wide")
+
 st.title("AISavvy 🧠↔️📊")
 st.markdown("Your intelligent, conversational database assistant.")
 
+# --- Helper function to generate a PDF from a DataFrame ---
+def create_pdf(df: pd.DataFrame) -> bytes:
+    """Creates a PDF file from a Pandas DataFrame and returns its content as bytes."""
+    pdf = FPDF(orientation="L") # Landscape orientation for wider tables
+    pdf.add_page()
+    pdf.set_font("Helvetica", "B", 16)
+    pdf.cell(0, 10, "AISavvy Query Result", 0, 1, "C")
+    
+    pdf.set_font("Helvetica", "B", 10)
+    
+    # Table Header
+    column_widths = []
+    for header in df.columns:
+        # A simple width calculation - can be improved
+        width = pdf.get_string_width(str(header)) + 8 # Add padding
+        column_widths.append(width)
+
+    for i, header in enumerate(df.columns):
+        pdf.cell(column_widths[i], 10, header, 1, 0, "C")
+    pdf.ln()
+
+    # Table Rows
+    pdf.set_font("Helvetica", "", 9)
+    for _, row in df.iterrows():
+        for i, item in enumerate(row):
+            # Use multi_cell for wrapping long text
+            pdf.cell(column_widths[i], 10, str(item), 1, 0)
+        pdf.ln()
+        
+    return pdf.output(dest='S').encode('latin-1')
+
+# --- Initialize session state for chat history ---
 if 'history' not in st.session_state:
     st.session_state.history = []
 
-# ... (get_ai_response function is unchanged)
+def get_ai_response(history):
+    """Calls the backend API and returns the JSON response."""
+    API_URL = "http://app:8000/query"
+    try:
+        response = requests.post(API_URL, json={"history": history})
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.HTTPError as e:
+        # Return the error response from the API if possible
+        try:
+            return {"error_data": e.response.json()}
+        except json.JSONDecodeError:
+            return {"error": f"API Error: {e.response.status_code} - {e.response.text}"}
+    except requests.exceptions.RequestException as e:
+        return {"error": f"Connection Error: Could not connect to the API. Details: {e}"}
 
-# Display chat history
-for turn in st.session_state.history:
+# --- Display Chat History ---
+for i, turn in enumerate(st.session_state.history):
     role = turn["role"]
     with st.chat_message(name=role, avatar="🧑‍💻" if role == "user" else "🤖"):
         content = turn["content"]
@@ -23,26 +73,75 @@ for turn in st.session_state.history:
         else: # Assistant's turn
             response_data = content
             
-            # --- NEW: Handle all new response types ---
-            if "off_topic" in response_data:
-                st.warning(response_data["off_topic"])
-            elif "clarification" in response_data:
+            # Handle all possible response types from the API
+            if "clarification" in response_data:
                 st.info(f'🤔 {response_data["clarification"]}')
             elif "no_results_explanation" in response_data:
                 st.info(f'✅ {response_data["no_results_explanation"]}')
+            elif "error_data" in response_data:
+                error_info = response_data["error_data"].get("detail", {})
+                st.error(f"Database Error: {error_info.get('error')}")
+                if "suggested_fix" in error_info:
+                    st.warning("🤖 AI Suggested Fix:")
+                    st.code(error_info["suggested_fix"], language="sql")
+            elif "off_topic" in response_data:
+                st.warning(f'🤖 {response_data["off_topic"]}')
             elif "error" in response_data:
-                # ... (error handling)
+                st.error(response_data["error"])
             else:
-                # ... (standard result display with tables, charts, explanations)
-                explanation = response_data.get("explanation")
-                if explanation and explanation != "Could not generate explanation.":
-                    st.success(f"💡 **Explanation:** {explanation}")
+                # --- This is the successful response block ---
+                summary = response_data.get("summary")
+                if summary:
+                    st.markdown(f"**💡 Summary:** {summary}")
                 
                 result = response_data.get("result")
-                df = pd.DataFrame(result)
-                st.dataframe(df, use_container_width=True)
-                # ... chart logic ...
-                with st.expander("Show Technical Details"):
-                    st.code(response_data.get("sql_query"), language='sql')
+                sql_query = response_data.get("sql_query")
+                chart_spec = response_data.get("chart_spec")
 
-# ... (Chat input and API call logic is unchanged)
+                if result:
+                    st.markdown("---")
+                    st.write("#### Data Result")
+                    df = pd.DataFrame(result)
+                    st.dataframe(df, use_container_width=True)
+
+                    # Add the PDF download button
+                    pdf_bytes = create_pdf(df)
+                    st.download_button(
+                        label="Download as PDF",
+                        data=pdf_bytes,
+                        file_name=f"aisavvy_result_{i}.pdf",
+                        mime="application/pdf"
+                    )
+
+                    if chart_spec and chart_spec.get("chart_needed"):
+                        try:
+                            st.subheader("📊 Visualization")
+                            chart_type = chart_spec.get("chart_type")
+                            x_col = chart_spec.get("x_column")
+                            y_col = chart_spec.get("y_column")
+                            
+                            if chart_type == "bar":
+                                chart = alt.Chart(df).mark_bar().encode(x=alt.X(x_col, sort=None), y=y_col)
+                            elif chart_type == "line":
+                                chart = alt.Chart(df).mark_line().encode(x=x_col, y=y_col)
+                            elif chart_type == "pie":
+                                chart = alt.Chart(df).mark_arc().encode(theta=y_col, color=x_col)
+                            st.altair_chart(chart, use_container_width=True)
+                        except Exception as e:
+                            st.warning(f"Could not generate chart: {e}")
+                
+                with st.expander("Show Technical Details"):
+                    st.code(sql_query, language='sql')
+
+# --- Handle User Input ---
+prompt = st.chat_input("Ask a question about your database...")
+if prompt:
+    # Add user message to history and immediately get the AI response
+    st.session_state.history.append({"role": "user", "content": prompt})
+    
+    with st.spinner("🧠 AISavvy is thinking..."):
+        response_data = get_ai_response(st.session_state.history)
+        st.session_state.history.append({"role": "assistant", "content": response_data})
+    
+    # Rerun the script to display the new messages immediately
+    st.rerun()
