@@ -28,7 +28,7 @@ jobs:
           
           echo "Bringing down existing Docker containers..."
           docker compose down
-          
+          cp /home/ubuntu/AISavvy/.env .
           echo "Making the deployment script executable..."
           chmod +x deploy.sh
           
