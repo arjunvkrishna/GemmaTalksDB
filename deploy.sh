@@ -18,13 +18,13 @@ echo -e "${YELLOW}Starting the AISavvy (Gemini Edition) deployment...${NC}"
 
 # Step 1: Build and start the Docker containers in detached mode
 echo -e "\n${YELLOW}[1/2] Building and starting all services (Postgres, API, UI, Telegram)...${NC}"
-docker-compose up --build -d
+docker compose up --build -d
 
 # Check if the last command was successful
 if [ $? -ne 0 ]; then
     echo -e "\n${RED}------------------------------------------------------------------${NC}"
     echo -e "${RED}Error: Docker Compose failed to start the services.${NC}"
-    echo -e "${RED}Please check for errors by running 'docker-compose logs'${NC}"
+    echo -e "${RED}Please check for errors by running 'docker compose logs'${NC}"
     echo -e "${RED}------------------------------------------------------------------${NC}"
     exit 1
 fi

@@ -8,7 +8,6 @@ from decimal import Decimal
 
 import asyncpg
 import aiosqlite
-# --- NEW: Import Google's library ---
 import google.generativeai as genai
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
@@ -19,10 +18,9 @@ DB_SCHEMA_CACHE = ""
 DB_HINTS_CACHE = ""
 DB_SCHEMA_HASH = ""
 db_pool = None
-# --- NEW: Gemini Model client ---
 gemini_model = None
 
-# --- Custom JSON Encoder ---
+# --- Custom JSON Encoder to Handle Database Decimal Types ---
 def json_default_encoder(obj):
     if isinstance(obj, Decimal):
         return float(obj)
@@ -31,6 +29,7 @@ def json_default_encoder(obj):
 # --- FastAPI Lifespan Manager ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """Handles application startup and shutdown events."""
     print("Application startup...")
     global db_pool, gemini_model, DB_SCHEMA_CACHE, DB_HINTS_CACHE, DB_SCHEMA_HASH
     
@@ -59,9 +58,11 @@ async def lifespan(app: FastAPI):
         print(f"FATAL: Could not connect to PostgreSQL: {e}")
         raise
     
-    # 3. Initialize Cache and load schema/hints
+    # 3. Initialize Cache and Log Database
     await setup_databases()
     print("Cache database initialized.")
+    
+    # 4. Pre-load DB Schema and Value Hints
     DB_SCHEMA_CACHE, DB_HINTS_CACHE, _ = await get_schema_and_hints()
     DB_SCHEMA_HASH = hashlib.sha256((DB_SCHEMA_CACHE + DB_HINTS_CACHE).encode()).hexdigest()
     print("Database schema and value hints pre-loaded.")
@@ -69,40 +70,107 @@ async def lifespan(app: FastAPI):
     print("Application startup complete.")
     yield
     
+    # --- On Shutdown ---
     print("Application shutdown...")
     if db_pool:
         await db_pool.close()
         print("Database connection pool closed.")
 
+# --- FastAPI App Initialization ---
 app = FastAPI(
     title="AISavvy API v6 (Gemini Edition)",
     description="A high-performance API using Google's Gemini for Conversational SQL.",
     lifespan=lifespan
 )
 
-# --- Pydantic Models and Helper functions are unchanged ---
+# --- Pydantic Models ---
 class Turn(BaseModel):
     role: str
     content: Union[str, Dict[str, Any]]
+
 class QueryRequest(BaseModel):
     history: List[Turn]
-# ... (setup_databases, get_from_cache, set_to_cache, log_query, get_schema_and_hints)
-# ... are the same as before. For brevity they are omitted here.
 
-# --- NEW: Centralized function to call the Gemini API ---
+# --- Helper Functions ---
+async def setup_databases():
+    async with aiosqlite.connect(CACHE_DB_PATH) as db:
+        await db.execute("CREATE TABLE IF NOT EXISTS llm_cache (key TEXT PRIMARY KEY, response TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS query_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                question TEXT,
+                sql_query TEXT,
+                success BOOLEAN,
+                error_message TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await db.commit()
+
+async def get_from_cache(key: str):
+    async with aiosqlite.connect(CACHE_DB_PATH) as db:
+        async with db.execute("SELECT response FROM llm_cache WHERE key = ?", (key,)) as cursor:
+            row = await cursor.fetchone()
+            return json.loads(row[0]) if row else None
+
+async def set_to_cache(key: str, response: dict):
+    async with aiosqlite.connect(CACHE_DB_PATH) as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO llm_cache (key, response) VALUES (?, ?)",
+            (key, json.dumps(response, default=json_default_encoder)),
+        )
+        await db.commit()
+
+async def log_query(question, sql, success, error=""):
+    async with aiosqlite.connect(CACHE_DB_PATH) as db:
+        await db.execute(
+            "INSERT INTO query_log (question, sql_query, success, error_message) VALUES (?, ?, ?, ?)",
+            (question, sql, success, error)
+        )
+        await db.commit()
+
+async def get_schema_and_hints():
+    async with db_pool.acquire() as conn:
+        tables = await conn.fetch("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'")
+        schema_parts, dot_parts, hint_parts = [], ["digraph ERD {", "graph [rankdir=LR];", "node [shape=plaintext];"], []
+        
+        for table in tables:
+            table_name = table['table_name']
+            columns_records = await conn.fetch(f"SELECT column_name FROM information_schema.columns WHERE table_name = '{table_name}' ORDER BY ordinal_position;")
+            column_names = [col['column_name'] for col in columns_records]
+            schema_parts.append(f"{table_name}({', '.join(column_names)})")
+
+        dept_names = await conn.fetch("SELECT DISTINCT department_name FROM departments ORDER BY department_name LIMIT 10")
+        if dept_names:
+            values = [row['department_name'] for row in dept_names]
+            hint_parts.append(f"- The 'department_name' column can have values like: {values}")
+
+        return "\n".join(schema_parts), "\n".join(hint_parts), "\n".join(dot_parts) + "\n}"
+
+# --- Prompt Generation Functions ---
+def generate_sql_prompt(schema, hints, history: List[Turn]):
+    conversation_log = "\n".join([
+        f"User: {turn.content}" if turn.role == 'user'
+        else f"Assistant (Result): {json.dumps(turn.content['result'], default=json_default_encoder)}"
+        for turn in history[:-1]
+        if turn.role == 'user' or (isinstance(turn.content, dict) and 'result' in turn.content)
+    ])
+    last_question = history[-1].content
+    return f"""You are a world-class PostgreSQL query writer AI...""" # The rest of the prompt string...
+
+def generate_relevance_prompt(schema, question):
+    return f"Is the following question related to a database with this schema? Schema: {schema}\nQuestion: {question}\nAnswer ONLY 'YES' or 'NO'."
+
+def generate_no_results_prompt(question, sql_query):
+    return f"The user asked: '{question}'. The query `{sql_query}` returned no rows. In one friendly sentence, explain why. Example: 'It appears there are no records matching your criteria.' Respond ONLY with the sentence."
+
 async def call_gemini(prompt: str) -> str:
-    """Calls the Gemini API and returns the text response."""
     try:
         response = await gemini_model.generate_content_async(prompt)
         return response.text
     except Exception as e:
         print(f"Error calling Gemini API: {e}")
-        # Return a specific error string that the main logic can check for
         return f"GEMINI_API_ERROR: {str(e)}"
-
-# --- Prompt Generation Functions are unchanged ---
-# ... (generate_sql_prompt, generate_relevance_prompt, generate_no_results_prompt)
-# ... are the same as before.
 
 # --- API Endpoints ---
 @app.get("/", tags=["Health Check"])
@@ -115,26 +183,18 @@ async def process_query(request: QueryRequest):
     if not isinstance(last_question, str):
         raise HTTPException(status_code=400, detail="Invalid question format.")
 
-    # --- Step 1: Relevance Check using Gemini ---
     relevance_prompt = generate_relevance_prompt(DB_SCHEMA_CACHE, last_question)
     relevance_response = await call_gemini(relevance_prompt)
-    if "GEMINI_API_ERROR" in relevance_response:
-        raise HTTPException(status_code=503, detail=relevance_response)
-    if 'NO' in relevance_response.strip().upper():
-        return {"off_topic": "That question does not seem to be about the database. Please ask a question related to employees or departments."}
+    if "GEMINI_API_ERROR" in relevance_response: raise HTTPException(status_code=503, detail=relevance_response)
+    if 'NO' in relevance_response.strip().upper(): return {"off_topic": "That question does not seem to be about the database."}
 
-    # --- Step 2: Cache Check (unchanged) ---
     history_str = json.dumps([turn.dict() for turn in request.history], default=json_default_encoder)
     cache_key_hash = hashlib.sha256((history_str + DB_SCHEMA_HASH).encode()).hexdigest()
-    cached_response = await get_from_cache(cache_key_hash)
-    if cached_response:
-        return cached_response
+    if cached_response := await get_from_cache(cache_key_hash): return cached_response
 
-    # --- Step 3: Generate SQL or Clarification using Gemini ---
     sql_prompt = generate_sql_prompt(DB_SCHEMA_CACHE, DB_HINTS_CACHE, request.history)
     response_text = await call_gemini(sql_prompt)
-    if "GEMINI_API_ERROR" in response_text:
-        raise HTTPException(status_code=503, detail=response_text)
+    if "GEMINI_API_ERROR" in response_text: raise HTTPException(status_code=503, detail=response_text)
     
     if response_text.strip().upper().startswith("CLARIFY:"):
         return {"clarification": response_text[len("CLARIFY:"):].strip()}
@@ -142,8 +202,6 @@ async def process_query(request: QueryRequest):
     sql_match = re.search(r"```(?:sql)?\s*(.*?)\s*```", response_text, re.DOTALL)
     sql_query = (sql_match.group(1).strip() if sql_match else response_text).rstrip(';')
     
-    # --- Step 4: Execute Query (unchanged) ---
-    results = []
     try:
         async with db_pool.acquire() as conn:
             stmt = await conn.prepare(sql_query)
@@ -151,24 +209,21 @@ async def process_query(request: QueryRequest):
             results = [dict(record) for record in records]
         await log_query(last_question, sql_query, True)
     except asyncpg.PostgresError as e:
-        # --- Auto-fix now uses Gemini ---
         error_message = str(e)
         await log_query(last_question, sql_query, False, error_message)
-        fix_prompt = f"The following SQL query failed: `{sql_query}`. The database error was: `{error_message}`. Based on the user's question: `{last_question}` and the schema: `{DB_SCHEMA_CACHE}`, provide a corrected SQL query. Respond with ONLY the corrected SQL query."
+        fix_prompt = f"The SQL query `{sql_query}` failed with the error: `{error_message}`. Based on the question: `{last_question}` and schema: `{DB_SCHEMA_CACHE}`, provide a corrected SQL query. Respond ONLY with the SQL."
         suggested_fix = await call_gemini(fix_prompt)
         raise HTTPException(status_code=400, detail={"error": error_message, "suggested_fix": suggested_fix})
 
-    # --- Step 5: Handle Empty Results using Gemini ---
     if not results:
         no_results_prompt = generate_no_results_prompt(last_question, sql_query)
         explanation = await call_gemini(no_results_prompt)
         return {"no_results_explanation": explanation}
     
-    # --- Step 6: Generate Explanation & DataViz Spec using Gemini ---
-    explain_prompt = f"In one simple, plain English sentence, explain what this SQL query does: `{sql_query}`"
+    explain_prompt = f"Explain this SQL query in one simple sentence: `{sql_query}`"
     explanation = await call_gemini(explain_prompt)
     
-    viz_prompt = f"Given the user's question: '{last_question}' and these resulting data columns: {list(results[0].keys())}. Should this be visualized? If yes, suggest a chart type (bar, line, or pie) and columns for x/y axes. Respond ONLY with a single, valid JSON object like {{\"chart_needed\": true, \"chart_type\": \"bar\", \"x_column\": \"name\", \"y_column\": \"salary\"}} or {{\"chart_needed\": false}}."
+    viz_prompt = f"Given the question: '{last_question}' and data columns: {list(results[0].keys())}, should this be a chart? If yes, suggest a chart type (bar, line, pie) and columns for x/y axes. Respond ONLY with a valid JSON object like {{\"chart_needed\": true, \"chart_type\": \"bar\", \"x_column\": \"name\", \"y_column\": \"salary\"}} or {{\"chart_needed\": false}}."
     viz_response = await call_gemini(viz_prompt)
     try:
         chart_spec = json.loads(viz_response.strip())
