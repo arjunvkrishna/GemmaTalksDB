@@ -10,6 +10,8 @@ from decimal import Decimal
 import asyncpg
 import aiosqlite
 import google.generativeai as genai
+# NEW: Import specific types for error handling
+import google.generativeai.types as genai_types
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
@@ -43,8 +45,7 @@ async def lifespan(app: FastAPI):
         if not gemini_api_key:
             raise ValueError("GEMINI_API_KEY environment variable not set.")
         genai.configure(api_key=gemini_api_key)
-        # Using a specific model version for stability
-        gemini_model = genai.GenerativeModel('gemini-1.5-flash-001')
+        gemini_model = genai.GenerativeModel('gemini-1.5-flash-latest')
         logger.info("Google Gemini client configured.")
     except Exception as e:
         logger.critical(f"FATAL: Could not configure Gemini client: {e}")
@@ -107,40 +108,43 @@ async def setup_databases():
 async def get_from_cache(key: str):
     async with aiosqlite.connect(CACHE_DB_PATH) as db:
         async with db.execute("SELECT response FROM llm_cache WHERE key = ?", (key,)) as cursor:
-            row = await cursor.fetchone()
-            return json.loads(row[0]) if row else None
+            row = await cursor.fetchone(); return json.loads(row[0]) if row else None
 
 async def set_to_cache(key: str, response: dict):
     async with aiosqlite.connect(CACHE_DB_PATH) as db:
-        await db.execute("INSERT OR REPLACE INTO llm_cache (key, response) VALUES (?, ?)", (key, json.dumps(response, default=json_default_encoder)))
-        await db.commit()
+        await db.execute("INSERT OR REPLACE INTO llm_cache (key, response) VALUES (?, ?)", (key, json.dumps(response, default=json_default_encoder))); await db.commit()
 
 async def log_query(question, sql, success, error=""):
     async with aiosqlite.connect(CACHE_DB_PATH) as db:
-        await db.execute("INSERT INTO query_log (question, sql_query, success, error_message) VALUES (?, ?, ?, ?)", (question, sql, success, error))
-        await db.commit()
+        await db.execute("INSERT INTO query_log (question, sql_query, success, error_message) VALUES (?, ?, ?, ?)",(question, sql, success, error)); await db.commit()
 
 async def get_schema_and_hints():
     async with db_pool.acquire() as conn:
-        tables = await conn.fetch("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'")
-        schema_parts, dot_parts, hint_parts = [], ["digraph ERD {", "graph [rankdir=LR];", "node [shape=plaintext];"], []
+        tables = await conn.fetch("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'"); schema_parts, dot_parts, hint_parts = [], ["digraph ERD {", "graph [rankdir=LR];", "node [shape=plaintext];"], []
         for table in tables:
-            table_name = table['table_name']
-            columns_records = await conn.fetch(f"SELECT column_name FROM information_schema.columns WHERE table_name = '{table_name}' ORDER BY ordinal_position;")
-            column_names = [col['column_name'] for col in columns_records]
-            schema_parts.append(f"{table_name}({', '.join(column_names)})")
-        dept_names = await conn.fetch("SELECT DISTINCT department_name FROM departments ORDER BY department_name LIMIT 10")
+            table_name = table['table_name']; columns_records = await conn.fetch(f"SELECT column_name, data_type FROM information_schema.columns WHERE table_name = '{table_name}' ORDER BY ordinal_position;"); column_names = [col['column_name'] for col in columns_records]; schema_parts.append(f"{table_name}({', '.join(column_names)})")
+            
+            label = f'<<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0"><TR><TD BGCOLOR="lightblue"><B>{table_name}</B></TD></TR>'
+            for col in columns_records:
+                label += f'<TR><TD PORT="{col["column_name"]}" ALIGN="LEFT">{col["column_name"]} <FONT COLOR="grey50">({col["data_type"]})</FONT></TD></TR>'
+            label += '</TABLE>>'
+            dot_parts.append(f'  "{table_name}" [shape=none, margin=0, label={label}];')
+
+        # Add relationships for the ERD
+        dot_parts.append('"employee":"department_id" -> "departments":"department_id" [label="belongs to"];')
+        dot_parts.append('"chef":"employee_id" -> "employee":"employee_id" [label="is an"];')
+        dot_parts.append('"salary":"employee_id" -> "employee":"employee_id" [label="paid to"];')
+        dot_parts.append('"sales":"employee_id" -> "employee":"employee_id" [label="handled by"];')
+        dot_parts.append('"purchase":"product_id" -> "kitchen_products":"product_id" [label="details"];')
+
+        dept_names = await conn.fetch("SELECT DISTINCT department_name FROM departments ORDER BY department_name LIMIT 10");
         if dept_names: hint_parts.append(f"- The 'department_name' column can have values like: {[row['department_name'] for row in dept_names]}")
+        
         return "\n".join(schema_parts), "\n".join(hint_parts), "\n".join(dot_parts) + "\n}"
 
 # --- Prompt Generation Functions ---
 def generate_sql_prompt(schema, hints, history: List[Turn]):
-    conversation_log = "\n".join([
-        f"User: {turn.content}" if turn.role == 'user'
-        else f"Assistant (Result): {json.dumps(turn.content['result'], default=json_default_encoder)}"
-        for turn in history[:-1]
-        if turn.role == 'user' or (isinstance(turn.content, dict) and 'result' in turn.content)
-    ])
+    conversation_log = "\n".join([f"User: {turn.content}" if turn.role == 'user' else f"Assistant (Result): {json.dumps(turn.content['result'], default=json_default_encoder)}" for turn in history[:-1] if turn.role == 'user' or (isinstance(turn.content, dict) and 'result' in turn.content)])
     last_question = history[-1].content
     
     return f"""You are a programmatic SQL-only generator. Your sole purpose is to produce a single, valid PostgreSQL query based on the user's request, or to ask a clarifying question.
@@ -176,14 +180,10 @@ def generate_no_results_prompt(question, sql_query):
 async def call_gemini(prompt: str) -> str:
     """Calls the Gemini API with robust error handling for safety blocks."""
     logger.info("--- Calling Gemini API ---")
-    logger.info(f"PROMPT:\n{prompt}")
     try:
-        # These settings turn off the safety filters.
         safety_settings = {
-            'HATE_SPEECH': 'BLOCK_NONE',
-            'HARASSMENT': 'BLOCK_NONE',
-            'SEXUALLY_EXPLICIT': 'BLOCK_NONE',
-            'DANGEROUS_CONTENT': 'BLOCK_NONE',
+            'HATE_SPEECH': 'BLOCK_NONE', 'HARASSMENT': 'BLOCK_NONE',
+            'SEXUALLY_EXPLICIT': 'BLOCK_NONE', 'DANGEROUS_CONTENT': 'BLOCK_NONE',
         }
         generation_config = genai.types.GenerationConfig(temperature=0.0)
         
@@ -192,25 +192,13 @@ async def call_gemini(prompt: str) -> str:
             generation_config=generation_config,
             safety_settings=safety_settings
         )
-
-        # After the call, explicitly check the response for blocks.
-        if response.candidates and response.candidates[0].finish_reason.name == "SAFETY":
-            block_reason = "Unknown"
-            if response.candidates[0].safety_ratings:
-                for rating in response.candidates[0].safety_ratings:
-                    # Check for probability of being blocked, as 'blocked' attribute might not always be present
-                    if rating.probability.value > 3: # Corresponds to HIGH probability or higher
-                        block_reason = rating.category.name
-                        break
-            error_msg = f"GEMINI_SAFETY_ERROR: Your request was blocked by the API's safety filter for reason: {block_reason}"
-            logger.error(error_msg)
-            return error_msg
-        
-        logger.info(f"GEMINI RAW RESPONSE:\n{response.text}")
+        # Accessing response.text will raise a ValueError if the response was blocked.
         return response.text
         
+    except ValueError as e:
+        logger.error(f"Gemini API blocked the response content: {e}")
+        return f"GEMINI_SAFETY_ERROR: The response was blocked by the safety filter. This can sometimes happen with complex SQL prompts. Please try rephrasing your question."
     except Exception as e:
-        # Catches other errors like invalid API key, network issues, or internal exceptions.
         logger.error(f"An unexpected error occurred calling Gemini API: {e}")
         return f"GEMINI_API_ERROR: {str(e)}"
 
@@ -226,7 +214,6 @@ async def process_query(request: QueryRequest):
     if not isinstance(last_question, str):
         raise HTTPException(status_code=400, detail="Invalid question format.")
 
-    logger.info("Step 1: Performing relevance check...")
     relevance_prompt = generate_relevance_prompt(DB_SCHEMA_CACHE, last_question)
     relevance_response = await call_gemini(relevance_prompt)
     if "GEMINI_API_ERROR" in relevance_response or "GEMINI_SAFETY_ERROR" in relevance_response:
@@ -236,7 +223,6 @@ async def process_query(request: QueryRequest):
         return {"off_topic": "That question does not seem to be about the database."}
     logger.info("Relevance check PASSED.")
 
-    logger.info("Step 2: Checking cache...")
     history_str = json.dumps([turn.dict() for turn in request.history], default=json_default_encoder)
     cache_key_hash = hashlib.sha256((history_str + DB_SCHEMA_HASH).encode()).hexdigest()
     if cached_response := await get_from_cache(cache_key_hash):
@@ -270,7 +256,7 @@ async def process_query(request: QueryRequest):
         error_message = str(e)
         logger.error(f"DATABASE ERROR: {error_message}")
         await log_query(last_question, sql_query, False, error_message)
-        fix_prompt = f"The following SQL query failed: `{sql_query}`. The database error was: `{error_message}`. Based on the question: `{last_question}` and schema: `{DB_SCHEMA_CACHE}`, provide a corrected SQL query. Respond with ONLY the SQL."
+        fix_prompt = f"The SQL query `{sql_query}` failed with the error: `{error_message}`. Based on the question: `{last_question}` and schema: `{DB_SCHEMA_CACHE}`, provide a corrected SQL query. Respond ONLY with the SQL."
         suggested_fix = await call_gemini(fix_prompt)
         raise HTTPException(status_code=400, detail={"error": error_message, "suggested_fix": suggested_fix})
 
@@ -284,7 +270,7 @@ async def process_query(request: QueryRequest):
     explain_prompt = f"Explain this SQL query in one simple sentence: `{sql_query}`"
     explanation = await call_gemini(explain_prompt)
     
-    viz_prompt = f"Given the question: '{last_question}' and data columns: {list(results[0].keys())}, should this be a chart? If yes, suggest a chart type (bar, line, pie) and columns for x/y axes. Respond ONLY with a valid JSON object like {{\"chart_needed\": true, \"chart_type\": \"bar\", \"x_column\": \"name\", \"y_column\": \"salary\"}} or {{\"chart_needed\": false}}."
+    viz_prompt = f"Given the question: '{last_question}' and data columns: {list(results[0].keys()) if results else []}, should this be a chart? If yes, suggest a chart type (bar, line, pie) and columns for x/y axes. Respond ONLY with a valid JSON object like {{\"chart_needed\": true, \"chart_type\": \"bar\", \"x_column\": \"name\", \"y_column\": \"salary\"}} or {{\"chart_needed\": false}}."
     viz_response = await call_gemini(viz_prompt)
     try:
         chart_spec = json.loads(viz_response.strip())

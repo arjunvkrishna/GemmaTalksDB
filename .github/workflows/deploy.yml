@@ -1,0 +1,38 @@
+# .github/workflows/deploy.yml
+
+name: Deploy from additional-features-v2 branch
+
+# This workflow triggers on a push to the specific branch
+on:
+  push:
+    branches:
+      - additional-features-v2  # IMPORTANT: This must match your branch name exactly
+
+jobs:
+  deploy:
+    # This job runs on your server because you've configured a self-hosted runner
+    runs-on: self-hosted
+
+    steps:
+      # Step 1: Check out the code from the 'additional-features-v2' branch
+      # This action checks out your repository under $GITHUB_WORKSPACE, so your job can access it.
+      # It automatically fetches the specific commit that triggered the workflow.
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # Step 2: Run the deployment sequence
+      - name: Deploy with Docker Compose and Script
+        run: |
+          # The commands below are executed directly in the shell of your server.
+          # We assume your docker-compose.yml and deploy.sh are in the root of your repository.
+          
+          echo "Bringing down existing Docker containers..."
+          docker compose down
+          
+          echo "Making the deployment script executable..."
+          chmod +x deploy.sh
+          
+          echo "Executing the deployment script..."
+          ./deploy.sh
+          
+          echo "Deployment script has finished."
