@@ -149,12 +149,14 @@ async def get_schema_and_hints():
 
 # --- Prompt Generation Functions ---
 def generate_sql_prompt(schema, hints, history: List[Turn]):
+    # This list comprehension correctly handles Pydantic 'Turn' objects
     conversation_log = "\n".join([
         f"User: {turn.content}" if turn.role == 'user'
         else f"Assistant (Result): {json.dumps(turn.content['result'], default=json_default_encoder)}"
         for turn in history[:-1]
         if turn.role == 'user' or (isinstance(turn.content, dict) and 'result' in turn.content)
     ])
+    
     last_question = history[-1].content
     
     return f"""You are a programmatic SQL-only generator. Your sole purpose is to produce a single, valid PostgreSQL query based on the user's request, or to ask a clarifying question.
