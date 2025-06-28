@@ -5,3 +5,4 @@ ollama
 python-dotenv
 asyncpg
 aiosqlite
+google-generativeai
