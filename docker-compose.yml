@@ -1,15 +1,16 @@
 version: '3.8'
 
-# This file orchestrates the five core services of the AISavvy platform.
+# This file orchestrates the four core services of the AISavvy platform,
+# now optimized to use the Google Gemini API instead of a local LLM.
 services:
 
-  # 1. The PostgreSQL Database Service
+  # 1. The PostgreSQL Database Service (unchanged)
   db:
     image: postgres:16
     container_name: postgres-db
     restart: always
     environment:
-      # Use the SUPERUSER credentials for database creation and initialization
+      # Uses the SUPERUSER credentials for database creation and initialization
       POSTGRES_USER: ${POSTGRES_USER_SUPER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD_SUPER}
       POSTGRES_DB: mydb
@@ -22,20 +23,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # 2. The Ollama LLM Serving Service
-  ollama:
-    image: ollama/ollama
-    container_name: ollama-service
-    restart: always
-    volumes:
-      - ollama_data:/root/.ollama
-
-  # 3. The Backend API (The "Brain" of the application)
-# In docker-compose.yml
-  
-  # ... (db and ollama services are unchanged) ...
-
-  # 3. The Backend API (The "Brain" of the application)
+  # 2. The Backend API (Now using Gemini)
   app:
     build: ./app
     container_name: aisavvy-api
@@ -45,20 +33,23 @@ services:
     volumes:
       - ./app_data:/app/data
     environment:
-      # ... (environment variables are unchanged)
-      DB_HOST: db
-      POSTGRES_DB: mydb
+      # Passes the read-only user credentials and the new Gemini API key
       POSTGRES_USER: ${POSTGRES_USER_APP}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD_APP}
-      OLLAMA_HOST: http://ollama:11434
-      LLM_MODEL: llama3
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      DB_HOST: db
+      POSTGRES_DB: mydb
     depends_on:
       db:
         condition: service_healthy
-      ollama:
-        condition: service_started
-      
-  # 4. The Streamlit Web Interface
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # 3. The Streamlit Web Interface (unchanged)
   ui:
     build: ./ui
     container_name: aisavvy-ui
@@ -67,9 +58,9 @@ services:
       - "8501:8501"
     depends_on:
       app:
-        condition: service_started
+        condition: service_healthy
 
-  # 5. The Telegram Bot Service
+  # 4. The Telegram Bot Service (unchanged)
   telegram-bot:
     build: ./telegram_bot
     container_name: aisavvy-telegram-bot
@@ -79,9 +70,8 @@ services:
       API_URL: http://app:8000/query
     depends_on:
       app:
-        condition: service_started
+        condition: service_healthy
 
-# Named volumes for persistent data storage
+# NOTE: The 'ollama_data' volume has been removed.
 volumes:
   pgdata:
-  ollama_data:
