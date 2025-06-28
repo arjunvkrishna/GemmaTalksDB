@@ -156,7 +156,30 @@ def generate_sql_prompt(schema, hints, history: List[Turn]):
         if turn.role == 'user' or (isinstance(turn.content, dict) and 'result' in turn.content)
     ])
     last_question = history[-1].content
-    return f"""You are a world-class PostgreSQL query writer AI...""" # The rest of the prompt string...
+    
+    return f"""You are a programmatic SQL-only generator. Your sole purpose is to produce a single, valid PostgreSQL query based on the user's request, or to ask a clarifying question.
+
+**TASK:** Analyze the user's final question, considering the database schema, value hints, and conversation history.
+
+**DATABASE SCHEMA:**
+{schema}
+
+**HINTS ON COLUMN VALUES:**
+{hints if hints else "No hints available."}
+
+**CONVERSATION HISTORY:**
+{conversation_log if conversation_log else "No previous conversation."}
+
+**USER'S FINAL QUESTION:**
+{last_question}
+
+**RULES FOR YOUR RESPONSE:**
+1.  If the user's request is clear, you MUST respond with only the raw SQL query. Do not include any other text, explanations, or markdown formatting like ```sql.
+2.  If the user's request is ambiguous (e.g., "show sales"), you MUST respond with only a clarifying question, prefixed with `CLARIFY:`.
+3.  If the request requires a calculation (e.g., "total", "average"), you MUST use the correct SQL aggregate function (`SUM`, `AVG`, `COUNT`, etc.).
+
+**OUTPUT (SQL or CLARIFY only):**
+"""
 
 def generate_relevance_prompt(schema, question):
     return f"Is the following question related to a database with this schema? Schema: {schema}\nQuestion: {question}\nAnswer ONLY 'YES' or 'NO'."
