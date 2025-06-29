@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  nginx-proxy:
+    # Use the official Nginx image, alpine is a lightweight choice
+    image: nginx:1.27-alpine
+
+    # A friendly name for the container
+    container_name: my_nginx_proxy
+
+    # Port mapping: <HOST_PORT>:<CONTAINER_PORT>
+    # This exposes the Nginx container's port 80 on your host machine's port 80.
+    ports:
+      - "80:80"
+
+    # Volume mapping: <HOST_PATH>:<CONTAINER_PATH>
+    # This mounts your custom proxy.conf into the Nginx configuration directory.
+    # The ':ro' flag makes it read-only inside the container, which is a good security practice.
+    volumes:
+      - ./nginx/proxy.conf:/etc/nginx/conf.d/proxy.conf:ro
+
+    # Restart policy to ensure the proxy is always running
+    restart: unless-stopped
+    
+    # It's good practice to define network settings, though for this simple case
+    # it might not be strictly necessary if 10.0.1.95 is on your physical LAN.
+    # networks:
+    #   - my_proxy_network
+
+# networks:
+#   my_proxy_network:
+#     driver: bridge

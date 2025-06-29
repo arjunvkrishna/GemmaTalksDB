@@ -20,6 +20,10 @@ echo -e "${YELLOW}Starting the AISavvy (Gemini Edition) deployment...${NC}"
 echo -e "\n${YELLOW}[1/2] Building and starting all services (Postgres, API, UI, Telegram)...${NC}"
 docker compose up --build -d
 docker compose exec ollama ollama pull llama3
+cd monitor 
+docker compose up -d
+cd ../web_server
+docker compose up -d
 # Check if the last command was successful
 if [ $? -ne 0 ]; then
     echo -e "\n${RED}------------------------------------------------------------------${NC}"
