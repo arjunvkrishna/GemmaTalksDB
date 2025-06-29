@@ -6,6 +6,8 @@ import logging
 from contextlib import asynccontextmanager
 from typing import List, Dict, Any, Union
 from decimal import Decimal
+# NEW: Import date and datetime for type checking
+from datetime import date, datetime
 
 import asyncpg
 import aiosqlite
@@ -27,21 +29,26 @@ ollama_client = None
 
 # --- Custom JSON Encoder ---
 def json_default_encoder(obj):
-    if isinstance(obj, Decimal): return float(obj)
+    """
+    Custom JSON encoder to handle special data types from the database
+    like Decimal and datetime objects.
+    """
+    if isinstance(obj, Decimal):
+        return float(obj)
+    # --- FIXED: Handle date and datetime objects ---
+    if isinstance(obj, (datetime, date)):
+        return obj.isoformat()
     raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
 
 # --- FastAPI Lifespan Manager ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Handles application startup and shutdown events."""
     logger.info("Application startup...")
     global db_pool, ollama_client, DB_SCHEMA_CACHE, DB_HINTS_CACHE, DB_SCHEMA_HASH
     
-    # 1. Initialize Ollama Client
     ollama_client = AsyncClient(host=os.getenv("OLLAMA_HOST", "http://ollama:11434"))
     logger.info("Ollama async client initialized.")
 
-    # 2. Initialize PostgreSQL Connection Pool
     try:
         db_pool = await asyncpg.create_pool(
             user=os.getenv("POSTGRES_USER_APP", "aisavvy"),
@@ -53,7 +60,6 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.critical(f"FATAL: Could not connect to PostgreSQL: {e}"); raise
     
-    # 3. Initialize Cache and load schema/hints
     await setup_databases()
     logger.info("Cache database initialized.")
     DB_SCHEMA_CACHE, DB_HINTS_CACHE, _ = await get_schema_and_hints()
@@ -97,10 +103,7 @@ async def get_schema_and_hints():
     async with db_pool.acquire() as conn:
         tables = await conn.fetch("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'"); schema_parts, dot_parts, hint_parts = [], ["digraph ERD {", "graph [rankdir=LR];", "node [shape=plaintext];"], []
         for table in tables:
-            table_name = table['table_name']
-            columns_records = await conn.fetch(f"SELECT column_name, data_type FROM information_schema.columns WHERE table_name = '{table_name}' ORDER BY ordinal_position;")
-            column_names = [col['column_name'] for col in columns_records]
-            schema_parts.append(f"{table_name}({', '.join(column_names)})")
+            table_name = table['table_name']; columns_records = await conn.fetch(f"SELECT column_name, data_type FROM information_schema.columns WHERE table_name = '{table_name}' ORDER BY ordinal_position;"); column_names = [col['column_name'] for col in columns_records]; schema_parts.append(f"{table_name}({', '.join(column_names)})")
             
             label = f'<<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0"><TR><TD BGCOLOR="lightblue"><B>{table_name}</B></TD></TR>'
             for col in columns_records:
@@ -128,7 +131,7 @@ def generate_sql_prompt(schema, hints, history: List[Turn]):
 ### HINTS:
 {hints if hints else "No hints available."}
 ### EXAMPLES:
-User: "Show departments with more than 2 employees"
+User: "Show departments that have more than 2 employees"
 SQL: SELECT d.department_name FROM employees e JOIN departments d ON e.department_id = d.department_id GROUP BY d.department_name HAVING COUNT(e.employee_id) > 2;
 ### HISTORY:
 {conversation_log if conversation_log else "No history."}
