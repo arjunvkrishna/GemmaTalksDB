@@ -1,221 +1,144 @@
-import os
-import re
+import streamlit as st
+import requests
+import pandas as pd
 import json
-import hashlib
-import logging
-from contextlib import asynccontextmanager
-from typing import List, Dict, Any, Union
-from decimal import Decimal
-# NEW: Import date and datetime for type checking
-from datetime import date, datetime
+import altair as alt
+from fpdf import FPDF
+from io import BytesIO
 
-import asyncpg
-import aiosqlite
-from ollama import AsyncClient
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
+st.set_page_config(page_title="AISavvy | Chat", page_icon="🧠", layout="wide")
 
-# --- Configure a logger ---
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+st.title("AISavvy 🧠↔️📊")
+st.markdown("Your intelligent, conversational database assistant.")
 
-# --- Configuration & In-memory Caches ---
-CACHE_DB_PATH = "/app/data/cache.db"
-DB_SCHEMA_CACHE = ""
-DB_HINTS_CACHE = ""
-DB_SCHEMA_HASH = ""
-db_pool = None
-ollama_client = None
-
-# --- Custom JSON Encoder ---
-def json_default_encoder(obj):
-    """
-    Custom JSON encoder to handle special data types from the database
-    like Decimal and datetime objects.
-    """
-    if isinstance(obj, Decimal):
-        return float(obj)
-    # --- FIXED: Handle date and datetime objects ---
-    if isinstance(obj, (datetime, date)):
-        return obj.isoformat()
-    raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
-
-# --- FastAPI Lifespan Manager ---
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    logger.info("Application startup...")
-    global db_pool, ollama_client, DB_SCHEMA_CACHE, DB_HINTS_CACHE, DB_SCHEMA_HASH
+# --- Helper function to generate a PDF from a DataFrame ---
+def create_pdf(df: pd.DataFrame) -> bytes:
+    """Creates a PDF file from a Pandas DataFrame and returns its content as bytes."""
+    pdf = FPDF(orientation="L") # Landscape orientation for wider tables
+    pdf.add_page()
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(0, 10, "AISavvy Query Result", 0, 1, "C")
     
-    ollama_client = AsyncClient(host=os.getenv("OLLAMA_HOST", "http://ollama:11434"))
-    logger.info("Ollama async client initialized.")
-
-    try:
-        db_pool = await asyncpg.create_pool(
-            user=os.getenv("POSTGRES_USER_APP", "aisavvy"),
-            password=os.getenv("POSTGRES_PASSWORD_APP", "my_password"),
-            database=os.getenv("POSTGRES_DB", "mydb"),
-            host=os.getenv("DB_HOST", "db"),
-        )
-        logger.info("Database connection pool created.")
-    except Exception as e:
-        logger.critical(f"FATAL: Could not connect to PostgreSQL: {e}"); raise
+    pdf.set_font("Helvetica", "B", 8)
     
-    await setup_databases()
-    logger.info("Cache database initialized.")
-    DB_SCHEMA_CACHE, DB_HINTS_CACHE, _ = await get_schema_and_hints()
-    DB_SCHEMA_HASH = hashlib.sha256((DB_SCHEMA_CACHE + DB_HINTS_CACHE).encode()).hexdigest()
-    logger.info("Database schema and value hints pre-loaded.")
-    
-    logger.info("Application startup complete.")
-    yield
-    
-    logger.info("Application shutdown...")
-    if db_pool: await db_pool.close()
+    # Table Header
+    column_widths = []
+    for header in df.columns:
+        # A simple width calculation for PDF columns
+        width = pdf.get_string_width(str(header)) + 6
+        column_widths.append(width)
 
-# --- FastAPI App Initialization ---
-app = FastAPI(title="AISavvy API v7 (Local LLM Edition)", lifespan=lifespan)
+    for i, header in enumerate(df.columns):
+        pdf.cell(column_widths[i], 10, header, 1, 0, "C")
+    pdf.ln()
 
-# --- Pydantic Models ---
-class Turn(BaseModel):
-    role: str
-    content: Union[str, Dict[str, Any]]
-class QueryRequest(BaseModel):
-    history: List[Turn]
-
-# --- Helper Functions ---
-async def setup_databases():
-    async with aiosqlite.connect(CACHE_DB_PATH) as db:
-        await db.execute("CREATE TABLE IF NOT EXISTS llm_cache (key TEXT PRIMARY KEY, response TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS query_log (id INTEGER PRIMARY KEY AUTOINCREMENT, question TEXT, sql_query TEXT, success BOOLEAN, error_message TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)
-        """)
-        await db.commit()
-async def get_from_cache(key: str):
-    async with aiosqlite.connect(CACHE_DB_PATH) as db:
-        c = await db.execute("SELECT response FROM llm_cache WHERE key = ?", (key,)); row = await c.fetchone(); return json.loads(row[0]) if row else None
-async def set_to_cache(key: str, response: dict):
-    async with aiosqlite.connect(CACHE_DB_PATH) as db:
-        await db.execute("INSERT OR REPLACE INTO llm_cache (key, response) VALUES (?, ?)", (key, json.dumps(response, default=json_default_encoder))); await db.commit()
-async def log_query(question, sql, success, error=""):
-    async with aiosqlite.connect(CACHE_DB_PATH) as db:
-        await db.execute("INSERT INTO query_log (question, sql_query, success, error_message) VALUES (?, ?, ?, ?)",(question, sql, success, error)); await db.commit()
-async def get_schema_and_hints():
-    async with db_pool.acquire() as conn:
-        tables = await conn.fetch("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'"); schema_parts, dot_parts, hint_parts = [], ["digraph ERD {", "graph [rankdir=LR];", "node [shape=plaintext];"], []
-        for table in tables:
-            table_name = table['table_name']; columns_records = await conn.fetch(f"SELECT column_name, data_type FROM information_schema.columns WHERE table_name = '{table_name}' ORDER BY ordinal_position;"); column_names = [col['column_name'] for col in columns_records]; schema_parts.append(f"{table_name}({', '.join(column_names)})")
-            
-            label = f'<<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0"><TR><TD BGCOLOR="lightblue"><B>{table_name}</B></TD></TR>'
-            for col in columns_records:
-                label += f'<TR><TD PORT="{col["column_name"]}" ALIGN="LEFT">{col["column_name"]} <FONT COLOR="grey50">({col["data_type"]})</FONT></TD></TR>'
-            label += '</TABLE>>'
-            dot_parts.append(f'  "{table_name}" [shape=none, margin=0, label={label}];')
-
-        dot_parts.append('"employee":"department_id" -> "departments":"department_id";')
-        dot_parts.append('"chef":"employee_id" -> "employee":"employee_id";')
-        dot_parts.append('"salary":"employee_id" -> "employee":"employee_id";')
-        dot_parts.append('"sales":"employee_id" -> "employee":"employee_id";')
-        dot_parts.append('"purchase":"product_id" -> "kitchen_products":"product_id";')
+    # Table Rows
+    pdf.set_font("Helvetica", "", 8)
+    for _, row in df.iterrows():
+        for i, item in enumerate(row):
+            pdf.cell(column_widths[i], 10, str(item), 1, 0)
+        pdf.ln()
         
-        dept_names = await conn.fetch("SELECT DISTINCT department_name FROM departments ORDER BY department_name LIMIT 10")
-        if dept_names: hint_parts.append(f"- The 'department_name' column can have values like: {[row['department_name'] for row in dept_names]}")
-        return "\n".join(schema_parts), "\n".join(hint_parts), "\n".join(dot_parts) + "\n}"
+    # --- FIXED: Use the modern, direct method to get the PDF content as bytes ---
+    return pdf.output()
 
-# --- Prompt Generation Functions ---
-def generate_sql_prompt(schema, hints, history: List[Turn]):
-    conversation_log = "\n".join([f"User: {turn.content}" if turn.role == 'user' else f"Assistant (Result): {json.dumps(turn.content['result'], default=json_default_encoder)}" for turn in history[:-1] if turn.role == 'user' or (isinstance(turn.content, dict) and 'result' in turn.content)])
-    last_question = history[-1].content
-    return f"""You are a world-class PostgreSQL query writer AI. Your output MUST BE ONLY the SQL query or a `CLARIFY:` question. No other text or markdown.
-### SCHEMA:
-{schema}
-### HINTS:
-{hints if hints else "No hints available."}
-### EXAMPLES:
-User: "Show departments that have more than 2 employees"
-SQL: SELECT d.department_name FROM employees e JOIN departments d ON e.department_id = d.department_id GROUP BY d.department_name HAVING COUNT(e.employee_id) > 2;
-### HISTORY:
-{conversation_log if conversation_log else "No history."}
-### FINAL QUESTION:
-{last_question}
-### RESPONSE:
-"""
-def generate_relevance_prompt(schema, question):
-    return f"Is this question related to the database schema? Schema: {schema}\nQuestion: {question}\nAnswer ONLY 'YES' or 'NO'."
-def generate_no_results_prompt(question, sql_query):
-    return f"The user asked: '{question}'. The query `{sql_query}` returned no rows. In one friendly sentence, explain why. Respond ONLY with the sentence."
-def generate_summary_prompt(question, result_data):
-    return f"""The user asked: "{question}". The data result is:
-{json.dumps(result_data, indent=2, default=json_default_encoder)}
-Write a short, friendly summary of this data. Respond ONLY with the summary sentence."""
 
-async def call_ollama(prompt: str) -> str:
-    logger.info("--- Calling Local Ollama API ---")
+# Initialize session state for chat history
+if 'history' not in st.session_state:
+    st.session_state.history = []
+
+def get_ai_response(history):
+    """Calls the backend API and returns the JSON response."""
+    API_URL = "http://app:8000/query"
     try:
-        response = await ollama_client.chat(model=os.getenv("LLM_MODEL", "llama3"), messages=[{'role': 'user', 'content': prompt}], options={'temperature': 0.0})
-        return response['message']['content']
-    except Exception as e:
-        logger.error(f"Error calling Ollama API: {e}"); return f"OLLAMA_API_ERROR: {str(e)}"
-
-# --- API Endpoints ---
-@app.get("/")
-async def read_root(): return {"status": "healthy"}
-
-@app.post("/query", tags=["Core Logic"])
-async def process_query(request: QueryRequest):
-    last_question = request.history[-1].content
-    if not isinstance(last_question, str): raise HTTPException(status_code=400, detail="Invalid question format.")
-    
-    relevance_prompt = generate_relevance_prompt(DB_SCHEMA_CACHE, last_question)
-    relevance_response = await call_ollama(relevance_prompt)
-    if "OLLAMA_API_ERROR" in relevance_response: raise HTTPException(status_code=503, detail=relevance_response)
-    if 'NO' in relevance_response.strip().upper(): return {"off_topic": "That question does not seem to be about the database."}
-    
-    history_str = json.dumps([turn.dict() for turn in request.history], default=json_default_encoder)
-    cache_key_hash = hashlib.sha256((history_str + DB_SCHEMA_HASH).encode()).hexdigest()
-    if cached_response := await get_from_cache(cache_key_hash): return cached_response
-    
-    sql_prompt = generate_sql_prompt(DB_SCHEMA_CACHE, DB_HINTS_CACHE, request.history)
-    response_text = await call_ollama(sql_prompt)
-    if "OLLAMA_API_ERROR" in response_text: raise HTTPException(status_code=503, detail=response_text)
-    
-    if response_text.strip().upper().startswith("CLARIFY:"):
-        return {"clarification": response_text[len("CLARIFY:"):].strip()}
-    
-    sql_match = re.search(r"```(?:sql)?\s*(.*?)\s*```", response_text, re.DOTALL); sql_query = (sql_match.group(1).strip() if sql_match else response_text).rstrip(';')
-    
-    try:
-        async with db_pool.acquire() as conn:
-            stmt = await conn.prepare(sql_query); records = await stmt.fetch(); results = [dict(record) for record in records]
-        await log_query(last_question, sql_query, True)
-    except asyncpg.PostgresError as e:
-        error_message = str(e); await log_query(last_question, sql_query, False, error_message)
-        fix_prompt = f"The SQL query `{sql_query}` failed with the error: `{error_message}`. Based on the question: `{last_question}` and schema: `{DB_SCHEMA_CACHE}`, provide a corrected SQL query. Respond ONLY with the SQL."
-        suggested_fix = await call_ollama(fix_prompt)
-        raise HTTPException(status_code=400, detail={"error": error_message, "suggested_fix": suggested_fix})
-    
-    if not results:
-        no_results_prompt = generate_no_results_prompt(last_question, sql_query); explanation = await call_ollama(no_results_prompt)
-        return {"no_results_explanation": explanation}
-    
-    summary_prompt = generate_summary_prompt(last_question, results)
-    summary = await call_ollama(summary_prompt)
-    
-    chart_spec = {"chart_needed": False}
-    if len(results) > 1:
+        response = requests.post(API_URL, json={"history": history})
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.HTTPError as e:
         try:
-            viz_prompt = f"Given the question: '{last_question}' and data columns: {list(results[0].keys())}, should this be a chart? If yes, suggest a chart type (bar, line, pie) and columns for x/y axes. Respond ONLY with a valid JSON object like {{\"chart_needed\": true, \"chart_type\": \"bar\", \"x_column\": \"name\", \"y_column\": \"salary\"}} or {{\"chart_needed\": false}}."
-            viz_response = await call_ollama(viz_prompt); chart_spec = json.loads(viz_response.strip())
-        except Exception: pass
+            return {"error_data": e.response.json()}
+        except json.JSONDecodeError:
+            return {"error": f"API Error: {e.response.status_code} - {e.response.text}"}
+    except requests.exceptions.RequestException as e:
+        return {"error": f"Connection Error: Could not connect to the API. Details: {e}"}
+
+# Display chat history
+for i, turn in enumerate(st.session_state.history):
+    role = turn["role"]
+    with st.chat_message(name=role, avatar="🧑‍💻" if role == "user" else "🤖"):
+        content = turn["content"]
+        if role == "user":
+            st.markdown(content)
+        else: # Assistant's turn
+            response_data = content
+            
+            # Handle all possible response types from the API
+            if "clarification" in response_data:
+                st.info(f'🤔 {response_data["clarification"]}')
+            elif "no_results_explanation" in response_data:
+                st.info(f'✅ {response_data["no_results_explanation"]}')
+            elif "error_data" in response_data:
+                error_info = response_data["error_data"].get("detail", {})
+                st.error(f"Database Error: {error_info.get('error')}")
+                if "suggested_fix" in error_info:
+                    st.warning("🤖 AI Suggested Fix:")
+                    st.code(error_info["suggested_fix"], language="sql")
+            elif "off_topic" in response_data:
+                st.warning(f'🤖 {response_data["off_topic"]}')
+            elif "error" in response_data:
+                st.error(response_data["error"])
+            else:
+                # --- This is the successful response block ---
+                summary = response_data.get("summary")
+                if summary:
+                    st.markdown(f"**💡 Summary:** {summary}")
+                
+                result = response_data.get("result")
+                sql_query = response_data.get("sql_query")
+                chart_spec = response_data.get("chart_spec")
+
+                if result:
+                    st.markdown("---")
+                    st.write("#### Data Result")
+                    df = pd.DataFrame(result)
+                    st.dataframe(df, use_container_width=True)
+
+                    # Add the PDF download button
+                    pdf_bytes = create_pdf(df)
+                    st.download_button(
+                        label="Download as PDF",
+                        data=pdf_bytes,
+                        file_name=f"aisavvy_result_{i}.pdf",
+                        mime="application/pdf"
+                    )
+
+                    if chart_spec and chart_spec.get("chart_needed"):
+                        try:
+                            st.subheader("📊 Visualization")
+                            chart_type = chart_spec.get("chart_type")
+                            x_col = chart_spec.get("x_column")
+                            y_col = chart_spec.get("y_column")
+                            
+                            if chart_type == "bar":
+                                chart = alt.Chart(df).mark_bar().encode(x=alt.X(x_col, sort=None), y=y_col)
+                            elif chart_type == "line":
+                                chart = alt.Chart(df).mark_line().encode(x=x_col, y=y_col)
+                            elif chart_type == "pie":
+                                chart = alt.Chart(df).mark_arc().encode(theta=y_col, color=x_col)
+                            st.altair_chart(chart, use_container_width=True)
+                        except Exception as e:
+                            st.warning(f"Could not generate chart: {e}")
+                
+                with st.expander("Show Technical Details"):
+                    st.code(sql_query, language='sql')
+
+# Handle user input
+prompt = st.chat_input("Ask a question about your database...")
+if prompt:
+    st.session_state.history.append({"role": "user", "content": prompt})
     
-    final_response = {"question": last_question, "sql_query": sql_query, "summary": summary, "result": results, "chart_spec": chart_spec}
-    await set_to_cache(cache_key_hash, final_response)
-    return final_response
-
-@app.get("/history")
-async def get_history():
-    async with aiosqlite.connect(CACHE_DB_PATH) as db:
-        db.row_factory = aiosqlite.Row; c = await db.execute("SELECT * FROM query_log ORDER BY created_at DESC"); rows = await c.fetchall(); return [dict(row) for row in rows]
-
-@app.get("/schema/erd")
-async def get_schema_erd():
-    _, _, erd_dot_string = await get_schema_and_hints(); return {"dot_string": erd_dot_string}
+    with st.spinner("🧠 AISavvy is thinking..."):
+        response_data = get_ai_response(st.session_state.history)
+        st.session_state.history.append({"role": "assistant", "content": response_data})
+    
+    st.rerun()
