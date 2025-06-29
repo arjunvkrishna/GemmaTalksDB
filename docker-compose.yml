@@ -38,7 +38,7 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./app_data:/app/data
+      - /home/ubuntu/AISavvy/app_data:/app/data
     environment:
       # Using read-only user credentials
       POSTGRES_USER: ${POSTGRES_USER_APP}
