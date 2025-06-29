@@ -34,5 +34,7 @@ jobs:
           
           echo "Executing the deployment script..."
           ./deploy.sh
+          cd monitior
+          docker compose up -d
           
           echo "Deployment script has finished."
