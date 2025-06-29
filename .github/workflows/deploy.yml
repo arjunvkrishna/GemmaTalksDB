@@ -33,8 +33,5 @@ jobs:
           chmod +x deploy.sh
           
           echo "Executing the deployment script..."
-          ./deploy.sh
-          cd monitior
-          docker compose up -d
-          
+          ./deploy.sh          
           echo "Deployment script has finished."
