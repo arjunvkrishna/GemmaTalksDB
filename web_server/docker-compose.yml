@@ -1,12 +1,10 @@
-version: '3.8'
-
 services:
   nginx-proxy:
     # Use the official Nginx image, alpine is a lightweight choice
     image: nginx:1.27-alpine
 
     # A friendly name for the container
-    container_name: my_nginx_proxy
+    container_name: aisavvy_nginx_proxy
 
     # Port mapping: <HOST_PORT>:<CONTAINER_PORT>
     # This exposes the Nginx container's port 80 on your host machine's port 80.

@@ -1,5 +1,3 @@
-version: '3.8'
-
 # This file orchestrates the five core services of the AISavvy platform,
 # using a local LLM with Ollama for stability and control.
 services:
