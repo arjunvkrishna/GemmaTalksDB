@@ -6,7 +6,6 @@ import altair as alt
 from fpdf import FPDF
 from io import BytesIO
 
-# --- Page Configuration ---
 st.set_page_config(page_title="AISavvy | Chat", page_icon="🧠", layout="wide")
 
 st.title("AISavvy 🧠↔️📊")
@@ -17,16 +16,16 @@ def create_pdf(df: pd.DataFrame) -> bytes:
     """Creates a PDF file from a Pandas DataFrame and returns its content as bytes."""
     pdf = FPDF(orientation="L") # Landscape orientation for wider tables
     pdf.add_page()
-    pdf.set_font("Helvetica", "B", 16)
+    pdf.set_font("Helvetica", "B", 12)
     pdf.cell(0, 10, "AISavvy Query Result", 0, 1, "C")
     
-    pdf.set_font("Helvetica", "B", 10)
+    pdf.set_font("Helvetica", "B", 8)
     
     # Table Header
     column_widths = []
     for header in df.columns:
-        # A simple width calculation - can be improved
-        width = pdf.get_string_width(str(header)) + 8 # Add padding
+        # A simple width calculation for PDF columns
+        width = pdf.get_string_width(str(header)) + 6 # Add padding
         column_widths.append(width)
 
     for i, header in enumerate(df.columns):
@@ -34,16 +33,17 @@ def create_pdf(df: pd.DataFrame) -> bytes:
     pdf.ln()
 
     # Table Rows
-    pdf.set_font("Helvetica", "", 9)
+    pdf.set_font("Helvetica", "", 8)
     for _, row in df.iterrows():
         for i, item in enumerate(row):
-            # Use multi_cell for wrapping long text
             pdf.cell(column_widths[i], 10, str(item), 1, 0)
         pdf.ln()
         
-    return pdf.output(dest='S').encode('latin-1')
+    # --- FIXED: Use the modern, direct method to get the PDF content as bytes ---
+    return pdf.output()
 
-# --- Initialize session state for chat history ---
+
+# Initialize session state for chat history
 if 'history' not in st.session_state:
     st.session_state.history = []
 
@@ -55,7 +55,6 @@ def get_ai_response(history):
         response.raise_for_status()
         return response.json()
     except requests.exceptions.HTTPError as e:
-        # Return the error response from the API if possible
         try:
             return {"error_data": e.response.json()}
         except json.JSONDecodeError:
@@ -63,7 +62,7 @@ def get_ai_response(history):
     except requests.exceptions.RequestException as e:
         return {"error": f"Connection Error: Could not connect to the API. Details: {e}"}
 
-# --- Display Chat History ---
+# Display chat history
 for i, turn in enumerate(st.session_state.history):
     role = turn["role"]
     with st.chat_message(name=role, avatar="🧑‍💻" if role == "user" else "🤖"):
@@ -133,15 +132,13 @@ for i, turn in enumerate(st.session_state.history):
                 with st.expander("Show Technical Details"):
                     st.code(sql_query, language='sql')
 
-# --- Handle User Input ---
+# Handle user input
 prompt = st.chat_input("Ask a question about your database...")
 if prompt:
-    # Add user message to history and immediately get the AI response
     st.session_state.history.append({"role": "user", "content": prompt})
     
     with st.spinner("🧠 AISavvy is thinking..."):
         response_data = get_ai_response(st.session_state.history)
         st.session_state.history.append({"role": "assistant", "content": response_data})
     
-    # Rerun the script to display the new messages immediately
     st.rerun()
