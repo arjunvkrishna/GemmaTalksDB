@@ -66,6 +66,25 @@ services:
       elasticsearch:
         condition: service_healthy
 
+  filebeat:
+    image: elastic/filebeat:8.14.0
+    container_name: filebeat
+    # Run as root user to access the Docker socket
+    user: root
+    volumes:
+      # Mount the Filebeat configuration file
+      - ./filebeat-config/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      # Mount the Docker socket to allow Filebeat to listen to Docker events
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Mount the Docker containers directory to access logs
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      # Volume for Filebeat to store its state (e.g., last read log position)
+      - filebeat_data:/usr/share/filebeat/data
+    networks:
+      - elk
+    depends_on:
+      - logstash
+
 networks:
   elk:
     driver: bridge
@@ -76,4 +95,6 @@ volumes:
   ls_data:
     driver: local
   kb_data:
+    driver: local
+  filebeat_data:
     driver: local
