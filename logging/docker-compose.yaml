@@ -1,14 +1,14 @@
 version: '3'
 services:
   elasticsearch:
-    image: elasticsearch:7.9.1
+    image: elasticsearch:9.0.2
     container_name: elasticsearch
     ports:
       - "9200:9200"
       - "9300:9300"
     volumes:
       - test_data:/usr/share/elasticsearch/data/
-      - ./elk-config/elasticsearch/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml
+      - .//home/ubuntu/AISavvy/elk-config/elasticsearch/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml
     environment:
       - discovery.type=single-node
       - http.host=0.0.0.0
@@ -21,14 +21,14 @@ services:
       - elk
 
   logstash:
-    image: logstash:7.9.1
+    image: logstash:9.0.2
     container_name: logstash
     ports:
       - "5044:5044"
       - "9600:9600"
     volumes:
-      - ./elk-config/logstash/logstash.conf:/usr/share/logstash/pipeline/logstash.conf
-      - ./elk-config/logstash/logstash.yml:/usr/share/logstash/config/logstash.yml
+      - ./home/ubuntu/AISavvy/elk-config/logstash/logstash.conf:/usr/share/logstash/pipeline/logstash.conf
+      - ./home/ubuntu/AISavvy/elk-config/logstash/logstash.yml:/usr/share/logstash/config/logstash.yml
       - ls_data:/usr/share/logstash/data
 
     networks:
@@ -37,12 +37,12 @@ services:
       - elasticsearch
 
   kibana:
-    image: kibana:7.9.1
+    image: kibana:9.0.2
     container_name: kibana
     ports:
       - "5601:5601"
     volumes:
-      - ./elk-config/kibana/kibana.yml:/usr/share/kibana/config/kibana.yml
+      - /home/ubuntu/AISavvy/elk-config/kibana/kibana.yml:/usr/share/kibana/config/kibana.yml
       - kb_data:/usr/share/kibana/data
     networks:
       - elk
