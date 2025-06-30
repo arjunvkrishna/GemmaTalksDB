@@ -8,7 +8,7 @@ services:
       - "9300:9300"
     volumes:
       - test_data:/usr/share/elasticsearch/data/
-      - /home/ubuntu/AISavvy/elk-config/elasticsearch/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml
+      - ./elk-config/elasticsearch/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml
     environment:
       - discovery.type=single-node
       - http.host=0.0.0.0
@@ -27,8 +27,8 @@ services:
       - "5044:5044"
       - "9600:9600"
     volumes:
-      - /home/ubuntu/AISavvy/elk-config/logstash/logstash.conf:/usr/share/logstash/pipeline/logstash.conf
-      - /home/ubuntu/AISavvy/elk-config/logstash/logstash.yml:/usr/share/logstash/config/logstash.yml
+      - ./elk-config/logstash/logstash.conf:/usr/share/logstash/pipeline/logstash.conf
+      - ./elk-config/logstash/logstash.yml:/usr/share/logstash/config/logstash.yml
       - ls_data:/usr/share/logstash/data
 
     networks:
@@ -42,7 +42,7 @@ services:
     ports:
       - "5601:5601"
     volumes:
-      - /home/ubuntu/AISavvy/elk-config/kibana/kibana.yml:/usr/share/kibana/config/kibana.yml
+      - ./elk-config/kibana/kibana.yml:/usr/share/kibana/config/kibana.yml
       - kb_data:/usr/share/kibana/data
     networks:
       - elk
