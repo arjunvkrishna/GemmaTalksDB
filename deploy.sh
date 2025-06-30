@@ -86,7 +86,10 @@ log_step "[3/5] Starting monitoring service..."
 log_step "[4/5] Starting reverse proxy service..."
 (cd web_server && execute "docker compose up -d" "Launching Nginx Proxy")
 
-log_step "[5/5] Verifying service status..."
+log_step "[5/6] Starting logging service..."
+(cd logging && execute "docker compose up -d" "Launching elk")
+
+log_step "[6/6] Verifying service status..."
 docker compose ps
 echo -e "${GREEN}All services have been initiated.${NC}"
 
