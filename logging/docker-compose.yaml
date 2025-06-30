@@ -1,53 +1,70 @@
-version: '3'
+version: '3.8'
+
 services:
   elasticsearch:
-    image: elasticsearch:9.0.2
+    image: elasticsearch:8.14.0
     container_name: elasticsearch
+    environment:
+      # Set heap size
+      - ES_JAVA_OPTS=-Xms1g -Xmx1g
+      # Required for bootstrap.memory_lock=true
+      - "bootstrap.memory_lock=true"
+      # Set discovery to single-node for a single instance cluster
+      - "discovery.type=single-node"
+    volumes:
+      - test_data:/usr/share/elasticsearch/data
+      - ./elk-config/elasticsearch/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml
     ports:
       - "9200:9200"
       - "9300:9300"
-    volumes:
-      - test_data:/usr/share/elasticsearch/data/
-      - ./elk-config/elasticsearch/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml
-    environment:
-      - discovery.type=single-node
-      - http.host=0.0.0.0
-      - transport.host=0.0.0.0
-      - xpack.security.enabled=false
-      - xpack.monitoring.enabled=false
-      - cluster.name=elasticsearch
-      - bootstrap.memory_lock=true
+    # Required for bootstrap.memory_lock=true
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s --cacert /usr/share/elasticsearch/config/certs/http_ca.crt -u elastic:changeme https://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s || curl -s -k http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
     networks:
       - elk
 
   logstash:
-    image: logstash:9.0.2
+    image: logstash:8.14.0
     container_name: logstash
-    ports:
-      - "5044:5044"
-      - "9600:9600"
+    # Set heap size
+    environment:
+      - LS_JAVA_OPTS=-Xms512m -Xmx512m
     volumes:
       - ./elk-config/logstash/logstash.conf:/usr/share/logstash/pipeline/logstash.conf
       - ./elk-config/logstash/logstash.yml:/usr/share/logstash/config/logstash.yml
       - ls_data:/usr/share/logstash/data
-
+    ports:
+      - "5044:5044"
+      - "9600:9600"
     networks:
       - elk
     depends_on:
-      - elasticsearch
+      elasticsearch:
+        condition: service_healthy
 
   kibana:
-    image: kibana:9.0.2
+    image: kibana:8.14.0
     container_name: kibana
-    ports:
-      - "5601:5601"
+    environment:
+      # Point Kibana to the Elasticsearch container
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
     volumes:
       - ./elk-config/kibana/kibana.yml:/usr/share/kibana/config/kibana.yml
       - kb_data:/usr/share/kibana/data
+    ports:
+      - "5601:5601"
     networks:
       - elk
     depends_on:
-      - elasticsearch
+      elasticsearch:
+        condition: service_healthy
 
 networks:
   elk:
@@ -55,5 +72,8 @@ networks:
 
 volumes:
   test_data:
+    driver: local
   ls_data:
+    driver: local
   kb_data:
+    driver: local

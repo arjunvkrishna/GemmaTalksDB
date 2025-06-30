@@ -1,2 +1,5 @@
-http.host: 0.0.0.0
-xpack.monitoring.elasticsearch.hosts: ["http://elasticsearch:9200"]
+# Make the Logstash monitoring API accessible
+http.host: "0.0.0.0"
+
+# Disable X-Pack monitoring as we disabled security in Elasticsearch
+xpack.monitoring.enabled: false
