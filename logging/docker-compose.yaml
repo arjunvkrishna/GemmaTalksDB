@@ -78,6 +78,11 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
       - filebeat_data:/usr/share/filebeat/data
+    command: >
+      sh -c "
+        chown root:root /usr/share/filebeat/filebeat.yml;
+        ./filebeat -e -c /usr/share/filebeat/filebeat.yml;
+      "
     networks:
       - elk
     depends_on:
