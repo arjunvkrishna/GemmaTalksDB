@@ -1,34 +1,18 @@
-# ======================== Filebeat inputs =========================
-# We will use autodiscover to automatically find and process logs
-# from any container that starts on the same Docker host.
+# filebeat.yml
 
+# Configure Filebeat to discover and read logs from Docker containers.
 filebeat.autodiscover:
   providers:
-    # Use the docker provider
     - type: docker
-      templates:
-        # Define a configuration template for all discovered containers
-        - condition:
-            # You can add conditions here to only collect from specific
-            # containers, e.g., by container name or label.
-            # We'll leave it open to collect from all.
-            contains:
-              docker.container.state: "running"
-          config:
-            - type: container
-              paths:
-                - /var/lib/docker/containers/${data.docker.container.id}/*.log
+      hints.enabled: true
 
-# ======================= Outputs ==================================
-
-# ---------------------------- Logstash output --------------------------------
-# We are sending to Logstash for processing before it goes to Elasticsearch.
-# The 'logstash' hostname is available because all our containers
-# are on the same 'elk' Docker network.
-
+# Send all collected logs to our Logstash service.
 output.logstash:
   hosts: ["logstash:5044"]
 
-# ======================= Logging ==================================
-# You can optionally set the logging level for Filebeat itself
-logging.level: info
+# Optional: Enable the Filebeat dashboard in Kibana (for future use)
+setup.kibana:
+
+# Optional: For monitoring Filebeat itself
+#http.enabled: true
+#http.port: 5066

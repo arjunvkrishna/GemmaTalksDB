@@ -1,44 +1,45 @@
 version: '3.8'
 
+# This Docker Compose file defines the standalone ELK (Elasticsearch, Logstash, Kibana)
+# and Filebeat stack for centralized logging, matching your specified file structure.
+
 services:
   elasticsearch:
     image: elasticsearch:8.14.0
-    container_name: elasticsearch
+    container_name: aisavvy-elasticsearch
     environment:
-      # Set heap size
       - ES_JAVA_OPTS=-Xms1g -Xmx1g
-      # Required for bootstrap.memory_lock=true
       - "bootstrap.memory_lock=true"
-      # Set discovery to single-node for a single instance cluster
       - "discovery.type=single-node"
+      - xpack.security.enabled=false # Disabling security for local dev
     volumes:
-      - test_data:/usr/share/elasticsearch/data
-      - ./elk-config/elasticsearch/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml
+      # Correct path based on your structure
+      - ./elk-config/elasticsearch/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml:ro
+      - es_data:/usr/share/elasticsearch/data
     ports:
       - "9200:9200"
       - "9300:9300"
-    # Required for bootstrap.memory_lock=true
     ulimits:
       memlock:
         soft: -1
         hard: -1
     healthcheck:
-      test: ["CMD-SHELL", "curl -s --cacert /usr/share/elasticsearch/config/certs/http_ca.crt -u elastic:changeme https://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s || curl -s -k http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s"]
+      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s"]
       interval: 10s
       timeout: 10s
-      retries: 5
+      retries: 10
     networks:
       - elk
 
   logstash:
     image: logstash:8.14.0
-    container_name: logstash
-    # Set heap size
+    container_name: aisavvy-logstash
     environment:
       - LS_JAVA_OPTS=-Xms512m -Xmx512m
     volumes:
-      - ./elk-config/logstash/logstash.conf:/usr/share/logstash/pipeline/logstash.conf
-      - ./elk-config/logstash/logstash.yml:/usr/share/logstash/config/logstash.yml
+      # Corrected paths based on your structure
+      - ./elk-config/logstash/logstash.conf:/usr/share/logstash/pipeline/logstash.conf:ro
+      - ./elk-config/logstash/logstash.yml:/usr/share/logstash/config/logstash.yml:ro
       - ls_data:/usr/share/logstash/data
     ports:
       - "5044:5044"
@@ -51,12 +52,12 @@ services:
 
   kibana:
     image: kibana:8.14.0
-    container_name: kibana
+    container_name: aisavvy-kibana
     environment:
-      # Point Kibana to the Elasticsearch container
       - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
     volumes:
-      - ./elk-config/kibana/kibana.yml:/usr/share/kibana/config/kibana.yml
+      # Correct path based on your structure
+      - ./elk-config/kibana/kibana.yml:/usr/share/kibana/config/kibana.yml:ro
       - kb_data:/usr/share/kibana/data
     ports:
       - "5601:5601"
@@ -68,17 +69,14 @@ services:
 
   filebeat:
     image: elastic/filebeat:8.14.0
-    container_name: filebeat
-    # Run as root user to access the Docker socket
-    user: root
+    container_name: aisavvy-filebeat
+    user: root # Required to access Docker socket logs
     volumes:
-      # Mount the Filebeat configuration file
+      # Corrected path based on your structure
       - ./filebeat-config/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
-      # Mount the Docker socket to allow Filebeat to listen to Docker events
+      # Mount Docker socket and log directories to discover other containers
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      # Mount the Docker containers directory to access logs
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
-      # Volume for Filebeat to store its state (e.g., last read log position)
       - filebeat_data:/usr/share/filebeat/data
     networks:
       - elk
@@ -90,7 +88,7 @@ networks:
     driver: bridge
 
 volumes:
-  test_data:
+  es_data:
     driver: local
   ls_data:
     driver: local
