@@ -81,6 +81,7 @@ services:
     command: >
       sh -c "
         chown root:root /usr/share/filebeat/filebeat.yml;
+        chmod go-w /usr/share/filebeat/filebeat.yml;
         ./filebeat -e -c /usr/share/filebeat/filebeat.yml;
       "
     networks:
