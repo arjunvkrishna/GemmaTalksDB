@@ -11,7 +11,8 @@ services:
       - ES_JAVA_OPTS=-Xms1g -Xmx1g
       - "bootstrap.memory_lock=true"
       - "discovery.type=single-node"
-      - xpack.security.enabled=false # Disabling security for local dev
+      - xpack.security.enabled=false
+      - "cluster.routing.allocation.disk.threshold_enabled=false"
     volumes:
       # Correct path based on your structure
       - ./elk-config/elasticsearch/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml:ro
@@ -28,8 +29,7 @@ services:
       interval: 10s
       timeout: 10s
       retries: 10
-    networks:
-      - elk
+      start_period: 30s
 
   logstash:
     image: logstash:8.14.0
@@ -55,6 +55,9 @@ services:
     container_name: aisavvy-kibana
     environment:
       - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - ELASTICSEARCH_REQUESTTIMEOUT=90000
+      # --- NEW: Tell Kibana migrations to accept a 'yellow' status ---
+      - "migrations.waitForIndexStatus=yellow"
     volumes:
       # Correct path based on your structure
       - ./elk-config/kibana/kibana.yml:/usr/share/kibana/config/kibana.yml:ro
@@ -72,8 +75,8 @@ services:
     container_name: aisavvy-filebeat
     user: root # Required to access Docker socket logs
     volumes:
-      # Corrected path based on your structure
-      - ./elk-config/filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml
+      # The config file mount is now read-write to allow permission changes at startup
+      - ./filebeat-config/filebeat.yml:/usr/share/filebeat/filebeat.yml
       # Mount Docker socket and log directories to discover other containers
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
