@@ -1,7 +1,6 @@
 version: '3.8'
 
 # This Docker Compose file defines the standalone ELK (Elasticsearch, Logstash, Kibana)
-# and Filebeat stack for centralized logging, matching your specified file structure.
 
 services:
   elasticsearch:
