@@ -10,9 +10,11 @@ services:
       - ES_JAVA_OPTS=-Xms1g -Xmx1g
       - "bootstrap.memory_lock=true"
       - "discovery.type=single-node"
+      # --- KEY CHANGE: Explicitly disable all security features ---
       - xpack.security.enabled=false
-      - xpack.security.enrollment.enabled=true
-      - "cluster.routing.allocation.disk.threshold_enabled=false"
+      - xpack.security.enrollment.enabled=false
+      - xpack.security.http.ssl.enabled=false
+      - xpack.security.transport.ssl.enabled=false
     volumes:
       # Correct path based on your structure
       - ./elk-config/elasticsearch/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml:ro
