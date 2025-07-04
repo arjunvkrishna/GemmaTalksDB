@@ -1,6 +1,7 @@
 version: '3.8'
 
-# This Docker Compose file defines the standalone ELK (Elasticsearch, Logstash, Kibana)
+# This Docker Compose file defines the standalone ELK stack with security
+# features explicitly disabled for a simple local development setup.
 
 services:
   elasticsearch:
@@ -10,13 +11,11 @@ services:
       - ES_JAVA_OPTS=-Xms1g -Xmx1g
       - "bootstrap.memory_lock=true"
       - "discovery.type=single-node"
-      # --- KEY CHANGE: Explicitly disable all security features ---
       - xpack.security.enabled=false
       - xpack.security.enrollment.enabled=false
       - xpack.security.http.ssl.enabled=false
       - xpack.security.transport.ssl.enabled=false
     volumes:
-      # Correct path based on your structure
       - ./elk-config/elasticsearch/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml:ro
       - es_data:/usr/share/elasticsearch/data
     ports:
@@ -31,7 +30,8 @@ services:
       interval: 10s
       timeout: 10s
       retries: 10
-      start_period: 30s
+    networks:
+      - elk
 
   logstash:
     image: logstash:8.14.0
@@ -39,7 +39,6 @@ services:
     environment:
       - LS_JAVA_OPTS=-Xms512m -Xmx512m
     volumes:
-      # Corrected paths based on your structure
       - ./elk-config/logstash/logstash.conf:/usr/share/logstash/pipeline/logstash.conf:ro
       - ./elk-config/logstash/logstash.yml:/usr/share/logstash/config/logstash.yml:ro
       - ls_data:/usr/share/logstash/data
@@ -57,11 +56,9 @@ services:
     container_name: aisavvy-kibana
     environment:
       - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      # Increase the request timeout to give Elasticsearch more time to start
       - ELASTICSEARCH_REQUESTTIMEOUT=90000
-      # --- NEW: Tell Kibana migrations to accept a 'yellow' status ---
-      - "migrations.waitForIndexStatus=yellow"
     volumes:
-      # Correct path based on your structure
       - ./elk-config/kibana/kibana.yml:/usr/share/kibana/config/kibana.yml:ro
       - kb_data:/usr/share/kibana/data
     ports:

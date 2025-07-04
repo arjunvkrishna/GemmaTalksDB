@@ -1,7 +1,7 @@
 # =================== Kibana Configuration ===================
 #
-# This configuration file is pre-configured for running Kibana within the
-# AISavvy Docker Compose setup.
+# This configuration file is for a local development setup with
+# Elasticsearch security features disabled.
 #
 
 # Default Kibana configuration for docker target
@@ -11,15 +11,6 @@ server.shutdownTimeout: "5s"
 # Point Kibana to the Elasticsearch container.
 # 'elasticsearch' is the service name defined in our docker-compose.yml file.
 elasticsearch.hosts: ["http://elasticsearch:9200"]
-
-# Increase the request timeout to give Elasticsearch more time to start,
-# preventing race conditions.
-elasticsearch.requestTimeout: 90000
-
-# Tell Kibana's migration process that a 'yellow' cluster status is acceptable.
-# This is critical for single-node Elasticsearch clusters where the status
-# will never become 'green' because there are no replica shards.
-migrations.waitForIndexStatus: "yellow"
 
 # Optional: You can add other settings below as needed.
 # For example, to change the default logging behavior:
