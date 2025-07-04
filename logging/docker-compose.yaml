@@ -76,7 +76,6 @@ services:
     volumes:
       # The config file mount is now read-write to allow permission changes at startup
       - ./elk-config/filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml
-      # Mount Docker socket and log directories to discover other containers
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
       - filebeat_data:/usr/share/filebeat/data
