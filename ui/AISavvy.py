@@ -8,7 +8,7 @@ from io import BytesIO
 
 st.set_page_config(page_title="AISavvy | Chat", page_icon="🧠", layout="wide")
 
-st.title("AISavvy ↔️📊")
+st.title("AISavvy 🧠↔️📊")
 st.markdown("Your intelligent, conversational database assistant.")
 
 # --- Helper function to generate a PDF from a DataFrame ---
