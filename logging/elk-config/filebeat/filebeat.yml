@@ -6,12 +6,13 @@ filebeat.autodiscover:
     - type: docker
       hints.enabled: true
 
-# Send all collected logs to our Logstash service.
-output.logstash:
-  hosts: ["logstash:5044"]
+# --- UPDATED: Send all collected logs directly to our Elasticsearch service ---
+output.elasticsearch:
+  hosts: ["elasticsearch:9200"]
 
 # Optional: Enable the Filebeat dashboard in Kibana (for future use)
 setup.kibana:
+  host: "kibana:5601"
 
 # Optional: For monitoring Filebeat itself
 #http.enabled: true
