@@ -1,12 +1,20 @@
 # filebeat.yml
 
-# Configure Filebeat to discover and read logs from Docker containers.
+# --- Explicitly define the Docker log input ---
+# This tells Filebeat to look for all .log files in the Docker container directories.
+filebeat.inputs:
+- type: container
+  paths:
+    - /var/lib/docker/containers/*/*.log
+
+# Configure Filebeat to discover and enrich logs from Docker containers.
+# This works alongside the direct input to add useful Docker metadata like container names.
 filebeat.autodiscover:
   providers:
     - type: docker
       hints.enabled: true
 
-# --- UPDATED: Send all collected logs directly to our Elasticsearch service ---
+# --- Send all collected logs directly to our Elasticsearch service ---
 output.elasticsearch:
   hosts: ["elasticsearch:9200"]
 
