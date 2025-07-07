@@ -83,8 +83,8 @@ execute "docker compose exec ollama ollama pull llama3" "Downloading Llama 3 mod
 log_step "[3/5] Starting monitoring service..."
 (cd monitoring && execute "docker compose up -d" "Launching Netdata")
 
-log_step "[4/5] Starting reverse proxy service..."
-(cd web_server && execute "docker compose up -d" "Launching Nginx Proxy")
+#log_step "[4/5] Starting reverse proxy service..."
+#(cd web_server && execute "docker compose up -d" "Launching Nginx Proxy")
 
 log_step "[5/6] Starting logging service..."
 (cd logging && execute "docker compose up -d" "Launching elk")
