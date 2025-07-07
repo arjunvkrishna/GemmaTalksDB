@@ -6,6 +6,7 @@ import altair as alt
 from fpdf import FPDF
 from io import BytesIO
 
+# --- Page Configuration ---
 st.set_page_config(page_title="AISavvy | Chat", page_icon="🧠", layout="wide")
 
 st.title("AISavvy 🧠↔️📊")
@@ -25,7 +26,7 @@ def create_pdf(df: pd.DataFrame) -> bytes:
     column_widths = []
     for header in df.columns:
         # A simple width calculation for PDF columns
-        width = pdf.get_string_width(str(header)) + 6 # Add padding
+        width = pdf.get_string_width(str(header)) + 8 # Add padding
         column_widths.append(width)
 
     for i, header in enumerate(df.columns):
@@ -39,11 +40,11 @@ def create_pdf(df: pd.DataFrame) -> bytes:
             pdf.cell(column_widths[i], 10, str(item), 1, 0)
         pdf.ln()
         
-    # --- FIXED: Use the modern, direct method to get the PDF content as bytes ---
+    # Use the modern, direct method to get the PDF content as bytes
     return pdf.output()
 
 
-# Initialize session state for chat history
+# --- Initialize session state for chat history ---
 if 'history' not in st.session_state:
     st.session_state.history = []
 
@@ -62,7 +63,7 @@ def get_ai_response(history):
     except requests.exceptions.RequestException as e:
         return {"error": f"Connection Error: Could not connect to the API. Details: {e}"}
 
-# Display chat history
+# --- Display Chat History ---
 for i, turn in enumerate(st.session_state.history):
     role = turn["role"]
     with st.chat_message(name=role, avatar="🧑‍💻" if role == "user" else "🤖"):
@@ -132,13 +133,15 @@ for i, turn in enumerate(st.session_state.history):
                 with st.expander("Show Technical Details"):
                     st.code(sql_query, language='sql')
 
-# Handle user input
+# --- Handle User Input ---
 prompt = st.chat_input("Ask a question about your database...")
 if prompt:
+    # Add user message to history and immediately get the AI response
     st.session_state.history.append({"role": "user", "content": prompt})
     
     with st.spinner("🧠 AISavvy is thinking..."):
         response_data = get_ai_response(st.session_state.history)
         st.session_state.history.append({"role": "assistant", "content": response_data})
     
+    # Rerun the script to display the new messages immediately
     st.rerun()
