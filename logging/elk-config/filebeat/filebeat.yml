@@ -8,7 +8,6 @@ filebeat.inputs:
     - /var/lib/docker/containers/*/*.log
 
 # Configure Filebeat to discover and enrich logs from Docker containers.
-# This works alongside the direct input to add useful Docker metadata like container names.
 filebeat.autodiscover:
   providers:
     - type: docker

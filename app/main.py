@@ -65,7 +65,7 @@ async def lifespan(app: FastAPI):
     if db_pool: await db_pool.close()
 
 # --- FastAPI App Initialization ---
-app = FastAPI(title="AISavvy API v7 (Local LLM Edition)", lifespan=lifespan)
+app = FastAPI(title="AISavvy API v8 (with Summaries)", lifespan=lifespan)
 
 # --- Pydantic Models ---
 class Turn(BaseModel):
@@ -97,19 +97,10 @@ async def get_schema_and_hints():
         for table in tables:
             table_name = table['table_name']
             columns_records = await conn.fetch(f"SELECT column_name, data_type FROM information_schema.columns WHERE table_name = '{table_name}' ORDER BY ordinal_position;"); column_names = [col['column_name'] for col in columns_records]; schema_parts.append(f"{table_name}({', '.join(column_names)})")
-            
             label = f'<<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0"><TR><TD BGCOLOR="lightblue"><B>{table_name}</B></TD></TR>'
-            for col in columns_records:
-                label += f'<TR><TD PORT="{col["column_name"]}" ALIGN="LEFT">{col["column_name"]} <FONT COLOR="grey50">({col["data_type"]})</FONT></TD></TR>'
-            label += '</TABLE>>'
-            dot_parts.append(f'  "{table_name}" [shape=none, margin=0, label={label}];')
-
-        dot_parts.append('"employee":"department_id" -> "departments":"department_id";')
-        dot_parts.append('"chef":"employee_id" -> "employee":"employee_id";')
-        dot_parts.append('"salary":"employee_id" -> "employee":"employee_id";')
-        dot_parts.append('"sales":"employee_id" -> "employee":"employee_id";')
-        dot_parts.append('"purchase":"product_id" -> "kitchen_products":"product_id";')
-        
+            for col in columns_records: label += f'<TR><TD PORT="{col["column_name"]}" ALIGN="LEFT">{col["column_name"]} <FONT COLOR="grey50">({col["data_type"]})</FONT></TD></TR>'
+            label += '</TABLE>>'; dot_parts.append(f'  "{table_name}" [shape=none, margin=0, label={label}];')
+        dot_parts.append('"employee":"department_id" -> "departments":"department_id";'); dot_parts.append('"chef":"employee_id" -> "employee":"employee_id";'); dot_parts.append('"salary":"employee_id" -> "employee":"employee_id";'); dot_parts.append('"sales":"employee_id" -> "employee":"employee_id";'); dot_parts.append('"purchase":"product_id" -> "kitchen_products":"product_id";')
         dept_names = await conn.fetch("SELECT DISTINCT department_name FROM departments ORDER BY department_name LIMIT 10")
         if dept_names: hint_parts.append(f"- The 'department_name' column can have values like: {[row['department_name'] for row in dept_names]}")
         return "\n".join(schema_parts), "\n".join(hint_parts), "\n".join(dot_parts) + "\n}"
@@ -137,9 +128,16 @@ def generate_relevance_prompt(schema, question):
 def generate_no_results_prompt(question, sql_query):
     return f"The user asked: '{question}'. The query `{sql_query}` returned no rows. In one friendly sentence, explain why. Respond ONLY with the sentence."
 def generate_summary_prompt(question, result_data):
-    return f"""The user asked: "{question}". The data result is:
+    return f"""The user asked the question: "{question}".
+The data result from the database is:
 {json.dumps(result_data, indent=2, default=json_default_encoder)}
-Write a short, friendly summary of this data. Respond ONLY with the summary sentence."""
+
+Based on the user's question, write a short, clear, and friendly natural language summary of this data.
+- If the result is a single number (like a total), state it clearly (e.g., "The total sales amount is $5,550.00.").
+- If the result is a list of items, summarize it concisely (e.g., "I found two chefs: Arjun Verma, who specializes in Continental Cuisine, and Priya Sharma, who specializes in Indian Cuisine.").
+- Do not just repeat the data. Provide a human-readable interpretation.
+Respond ONLY with the summary sentence.
+"""
 
 async def call_ollama(prompt: str) -> str:
     logger.info("--- Calling Local Ollama API ---")
