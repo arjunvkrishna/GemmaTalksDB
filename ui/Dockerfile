@@ -20,4 +20,4 @@ EXPOSE 8501
 HEALTHCHECK CMD streamlit hello --server.port=8501
 
 # Run the application
-CMD ["streamlit", "run", "ui.py", "--server.port=8501", "--server.address=0.0.0.0"]
+CMD ["streamlit", "run", "AISavvy.py", "--server.port=8501", "--server.address=0.0.0.0"]
