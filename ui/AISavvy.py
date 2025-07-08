@@ -26,8 +26,26 @@ def create_pdf(df: pd.DataFrame) -> bytes:
     column_widths = []
     for header in df.columns:
         # A simple width calculation for PDF columns
+        # Ensure header is a string before passing to get_string_width
         width = pdf.get_string_width(str(header)) + 8 # Add padding
         column_widths.append(width)
+
+    # Adjust column widths to ensure they don't exceed page width and are somewhat balanced
+    # This is a basic adjustment; for complex tables, more sophisticated logic might be needed
+    page_width = pdf.w - 2 * pdf.l_margin
+    total_calculated_width = sum(column_widths)
+    
+    if total_calculated_width > page_width:
+        # Scale down widths proportionally if they exceed page width
+        scale_factor = page_width / total_calculated_width
+        column_widths = [w * scale_factor for w in column_widths]
+    else:
+        # Distribute remaining space if total width is less than page width
+        remaining_space = page_width - total_calculated_width
+        if len(column_widths) > 0:
+            space_per_column = remaining_space / len(column_widths)
+            column_widths = [w + space_per_column for w in column_widths]
+
 
     for i, header in enumerate(df.columns):
         pdf.cell(column_widths[i], 10, header, 1, 0, "C")
@@ -37,11 +55,19 @@ def create_pdf(df: pd.DataFrame) -> bytes:
     pdf.set_font("Helvetica", "", 8)
     for _, row in df.iterrows():
         for i, item in enumerate(row):
-            pdf.cell(column_widths[i], 10, str(item), 1, 0)
+            # Ensure item is a string and handle potential encoding issues
+            cell_text = str(item)
+            try:
+                # Attempt to encode to latin-1, which FPDF uses by default
+                cell_text.encode('latin-1')
+            except UnicodeEncodeError:
+                # Replace unsupported characters if encoding fails
+                cell_text = cell_text.encode('latin-1', 'replace').decode('latin-1')
+            pdf.cell(column_widths[i], 10, cell_text, 1, 0)
         pdf.ln()
         
-    # Use the modern, direct method to get the PDF content as bytes
-    return pdf.output()
+    # Convert bytearray to bytes before returning
+    return bytes(pdf.output())
 
 
 # --- Initialize session state for chat history ---
@@ -125,7 +151,7 @@ for i, turn in enumerate(st.session_state.history):
                             elif chart_type == "line":
                                 chart = alt.Chart(df).mark_line().encode(x=x_col, y=y_col)
                             elif chart_type == "pie":
-                                chart = alt.Chart(df).mark_arc().encode(theta=y_col, color=x_col)
+                                chart = alt.Chart(df).mark_arc().encode(theta=alt.Theta(field=y_col, type="quantitative"), color=alt.Color(field=x_col, type="nominal"))
                             st.altair_chart(chart, use_container_width=True)
                         except Exception as e:
                             st.warning(f"Could not generate chart: {e}")
