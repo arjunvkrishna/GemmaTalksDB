@@ -11,6 +11,8 @@ services:
       POSTGRES_USER: ${POSTGRES_USER_SUPER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD_SUPER}
       POSTGRES_DB: mydb
+    ports:
+      - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - /home/ubuntu/AISavvy/init.sql:/docker-entrypoint-initdb.d/init.sql
