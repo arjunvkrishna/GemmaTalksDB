@@ -146,17 +146,13 @@ for i, turn in enumerate(st.session_state.history):
                             x_col = chart_spec.get("x_column")
                             y_col = chart_spec.get("y_column")
                             
-                            # Add checks for x_col and y_col before creating the chart
-                            if x_col is None or y_col is None:
-                                st.warning(f"Could not generate chart: Missing 'x_column' or 'y_column' in chart specification. Received x_col: {x_col}, y_col: {y_col}")
-                            else:
-                                if chart_type == "bar":
-                                    chart = alt.Chart(df).mark_bar().encode(x=alt.X(x_col, sort=None), y=y_col)
-                                elif chart_type == "line":
-                                    chart = alt.Chart(df).mark_line().encode(x=x_col, y=y_col)
-                                elif chart_type == "pie":
-                                    chart = alt.Chart(df).mark_arc().encode(theta=alt.Theta(field=y_col, type="quantitative"), color=alt.Color(field=x_col, type="nominal"))
-                                st.altair_chart(chart, use_container_width=True)
+                            if chart_type == "bar":
+                                chart = alt.Chart(df).mark_bar().encode(x=alt.X(x_col, sort=None), y=y_col)
+                            elif chart_type == "line":
+                                chart = alt.Chart(df).mark_line().encode(x=x_col, y=y_col)
+                            elif chart_type == "pie":
+                                chart = alt.Chart(df).mark_arc().encode(theta=alt.Theta(field=y_col, type="quantitative"), color=alt.Color(field=x_col, type="nominal"))
+                            st.altair_chart(chart, use_container_width=True)
                         except Exception as e:
                             st.warning(f"Could not generate chart: {e}")
                 
